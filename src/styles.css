@@ -1,0 +1,209 @@
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+
+@source "../src";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-gold: var(--gold);
+  --color-gold-deep: var(--gold-deep);
+  --color-honey: var(--honey);
+  --color-royal: var(--royal);
+  --color-royal-deep: var(--royal-deep);
+  --font-display: "Fredoka", "Baloo 2", system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+:root {
+  --radius: 1rem;
+  --background: oklch(0.99 0.02 95);
+  --foreground: oklch(0.25 0.06 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.25 0.06 60);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.25 0.06 60);
+  --primary: oklch(0.72 0.18 70); /* laranja dourado */
+  --primary-foreground: oklch(0.99 0.02 90);
+  --secondary: oklch(0.96 0.05 90);
+  --secondary-foreground: oklch(0.3 0.08 60);
+  --muted: oklch(0.96 0.03 90);
+  --muted-foreground: oklch(0.5 0.04 70);
+  --accent: oklch(0.85 0.18 90); /* amarelo ouro */
+  --accent-foreground: oklch(0.25 0.08 60);
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.9 0.04 85);
+  --input: oklch(0.93 0.03 85);
+  --ring: oklch(0.72 0.18 70);
+
+  --gold: oklch(0.85 0.18 90);
+  --gold-deep: oklch(0.72 0.18 70);
+  --honey: oklch(0.78 0.2 80);
+  --royal: oklch(0.45 0.18 255); /* azul institucional */
+  --royal-deep: oklch(0.32 0.16 260);
+
+  --gradient-gold: linear-gradient(
+    135deg,
+    oklch(0.92 0.16 95) 0%,
+    oklch(0.78 0.2 80) 50%,
+    oklch(0.62 0.2 60) 100%
+  );
+  --gradient-hero:
+    radial-gradient(at 20% 10%, oklch(0.95 0.14 95) 0%, transparent 50%),
+    radial-gradient(at 80% 0%, oklch(0.88 0.2 80) 0%, transparent 45%),
+    linear-gradient(180deg, oklch(0.97 0.08 95) 0%, oklch(0.93 0.14 90) 100%);
+  --gradient-royal: linear-gradient(135deg, oklch(0.45 0.18 255), oklch(0.32 0.16 260));
+
+  --shadow-gold: 0 20px 60px -20px oklch(0.78 0.2 80 / 0.5);
+  --shadow-glow: 0 0 40px oklch(0.88 0.2 85 / 0.6);
+  --shadow-card: 0 8px 30px -12px oklch(0.3 0.1 60 / 0.18);
+
+  --sidebar: oklch(0.99 0.02 95);
+  --sidebar-foreground: oklch(0.25 0.06 60);
+  --sidebar-primary: oklch(0.72 0.18 70);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.96 0.05 90);
+  --sidebar-accent-foreground: oklch(0.3 0.08 60);
+  --sidebar-border: oklch(0.9 0.04 85);
+  --sidebar-ring: oklch(0.72 0.18 70);
+}
+
+.dark {
+  --background: oklch(0.2 0.04 60);
+  --foreground: oklch(0.97 0.04 90);
+  --card: oklch(0.25 0.05 60);
+  --card-foreground: oklch(0.97 0.04 90);
+  --popover: oklch(0.25 0.05 60);
+  --popover-foreground: oklch(0.97 0.04 90);
+  --primary: oklch(0.82 0.18 85);
+  --primary-foreground: oklch(0.2 0.06 60);
+  --secondary: oklch(0.3 0.05 60);
+  --secondary-foreground: oklch(0.97 0.04 90);
+  --muted: oklch(0.3 0.04 60);
+  --muted-foreground: oklch(0.7 0.04 80);
+  --accent: oklch(0.78 0.2 80);
+  --accent-foreground: oklch(0.2 0.06 60);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 14%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(at 0% 0%, oklch(0.92 0.14 95 / 0.4) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, oklch(0.88 0.18 80 / 0.25) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@utility glass-card {
+  background: color-mix(in oklab, var(--card) 75%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid color-mix(in oklab, var(--gold) 30%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+@utility gold-gradient {
+  background: var(--gradient-gold);
+}
+
+@utility gold-text {
+  background: linear-gradient(135deg, oklch(0.65 0.22 60), oklch(0.78 0.2 80), oklch(0.62 0.22 50));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility shine-on-hover {
+  position: relative;
+  overflow: hidden;
+}
+.shine-on-hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, oklch(1 0 0 / 0.4) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.7s ease;
+}
+.shine-on-hover:hover::after {
+  transform: translateX(100%);
+}
+
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(2deg);
+  }
+}
+@keyframes shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+@keyframes glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 20px oklch(0.85 0.2 85 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 50px oklch(0.85 0.2 85 / 0.8);
+  }
+}
+
+.animate-float {
+  animation: float-slow 6s ease-in-out infinite;
+}
+.animate-shimmer {
+  background-size: 200% 200%;
+  animation: shimmer 4s ease infinite;
+}
+.animate-glow {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
