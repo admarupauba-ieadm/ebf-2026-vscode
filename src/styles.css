@@ -207,3 +207,43 @@
 .animate-glow {
   animation: glow-pulse 3s ease-in-out infinite;
 }
+
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 11px;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+    margin-bottom: 12px;
+  }
+
+  .print-area {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .glass-card {
+    border: 1px solid #cfcfcf !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    backdrop-filter: none !important;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    padding: 4px 6px !important;
+    border-color: #d6d6d6 !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
