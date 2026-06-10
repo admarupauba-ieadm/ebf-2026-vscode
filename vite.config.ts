@@ -12,4 +12,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Force-enable Nitro outside Lovable sandbox and target Vercel build output.
+  // Without this, only dist/client+dist/server are emitted and Vercel static output can 404.
+  nitro: {
+    preset: "vercel",
+  },
 });
