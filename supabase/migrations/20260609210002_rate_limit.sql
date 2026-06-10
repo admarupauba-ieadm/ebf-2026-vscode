@@ -49,7 +49,7 @@ END;
 $$;
 
 -- Recreate criar_inscricao to include rate limiting
--- (Must preserve existing signature and behavior)
+-- (Must preserve original signature, upsert logic, and schema)
 CREATE OR REPLACE FUNCTION public.criar_inscricao(payload JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -58,119 +58,106 @@ SET search_path = public
 AS $$
 DECLARE
   v_protocolo TEXT;
-  v_inscricao_id BIGINT;
+  v_crc_id UUID;
+  v_resp_id UUID;
   v_cpf TEXT;
-  v_responsavel JSONB;
-  v_crianca JSONB;
-  v_saude JSONB;
-  v_emergencia JSONB;
-  v_autorizacoes JSONB;
 BEGIN
-  -- Extract sub-objects
-  v_responsavel := payload->'responsavel';
-  v_crianca := payload->'crianca';
-  v_saude := payload->'saude';
-  v_emergencia := payload->'emergencia';
-  v_autorizacoes := payload->'autorizacoes';
-
   -- Extract CPF for rate limiting
-  v_cpf := TRIM(v_responsavel->>'cpf');
+  v_cpf := regexp_replace(payload->'responsavel'->>'cpf', '\D', '', 'g');
   IF v_cpf IS NULL OR v_cpf = '' THEN
     RAISE EXCEPTION 'CPF do responsável é obrigatório.';
   END IF;
 
-  -- Rate limit check
+  -- Rate limit check (max 3 inscrições por CPF a cada 60 min)
   PERFORM public.check_inscricao_rate_limit(v_cpf);
 
   -- Validate required fields
-  IF NULLIF(TRIM(v_responsavel->>'nome'), '') IS NULL THEN
+  IF NULLIF(TRIM(payload->'responsavel'->>'nome'), '') IS NULL THEN
     RAISE EXCEPTION 'Nome do responsável é obrigatório.';
   END IF;
-  IF NULLIF(TRIM(v_responsavel->>'telefone'), '') IS NULL THEN
+  IF NULLIF(TRIM(payload->'responsavel'->>'telefone'), '') IS NULL THEN
     RAISE EXCEPTION 'Telefone do responsável é obrigatório.';
   END IF;
-  IF NULLIF(TRIM(v_crianca->>'nome'), '') IS NULL THEN
+  IF NULLIF(TRIM(payload->'crianca'->>'nome'), '') IS NULL THEN
     RAISE EXCEPTION 'Nome da criança é obrigatório.';
   END IF;
-  IF NULLIF(TRIM(v_crianca->>'data_nascimento'), '') IS NULL THEN
+  IF NULLIF(TRIM(payload->'crianca'->>'data_nascimento'), '') IS NULL THEN
     RAISE EXCEPTION 'Data de nascimento da criança é obrigatória.';
   END IF;
-  IF NULLIF(TRIM(v_crianca->>'sexo'), '') IS NULL THEN
+  IF NULLIF(TRIM(payload->'crianca'->>'sexo'), '') IS NULL THEN
     RAISE EXCEPTION 'Sexo da criança é obrigatório.';
   END IF;
-  IF v_autorizacoes IS NULL
-     OR (v_autorizacoes->>'participacao')::BOOLEAN IS DISTINCT FROM true
-     OR (v_autorizacoes->>'veracidade')::BOOLEAN IS DISTINCT FROM true
+  IF (payload->'autorizacoes'->>'participacao')::BOOLEAN IS DISTINCT FROM true
+     OR (payload->'autorizacoes'->>'veracidade')::BOOLEAN IS DISTINCT FROM true
   THEN
     RAISE EXCEPTION 'Autorização de participação e confirmação de veracidade são obrigatórias.';
   END IF;
 
-  -- Generate protocolo
-  v_protocolo := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 12));
+  -- Find or create responsavel (original upsert logic)
+  SELECT id INTO v_resp_id FROM public.responsaveis WHERE cpf = v_cpf;
+  IF v_resp_id IS NULL THEN
+    INSERT INTO public.responsaveis (nome, cpf, telefone, whatsapp, email, endereco, bairro, cidade, estado, igreja, nome_pai, nome_mae)
+    VALUES (
+      payload->'responsavel'->>'nome', v_cpf,
+      payload->'responsavel'->>'telefone',
+      payload->'responsavel'->>'whatsapp',
+      payload->'responsavel'->>'email',
+      payload->'responsavel'->>'endereco',
+      payload->'responsavel'->>'bairro',
+      payload->'responsavel'->>'cidade',
+      payload->'responsavel'->>'estado',
+      payload->'responsavel'->>'igreja',
+      payload->'responsavel'->>'nome_pai',
+      payload->'responsavel'->>'nome_mae'
+    ) RETURNING id INTO v_resp_id;
+  ELSE
+    UPDATE public.responsaveis SET
+      nome = COALESCE(payload->'responsavel'->>'nome', nome),
+      telefone = COALESCE(payload->'responsavel'->>'telefone', telefone),
+      whatsapp = COALESCE(payload->'responsavel'->>'whatsapp', whatsapp),
+      email = COALESCE(payload->'responsavel'->>'email', email),
+      endereco = COALESCE(payload->'responsavel'->>'endereco', endereco),
+      bairro = COALESCE(payload->'responsavel'->>'bairro', bairro),
+      cidade = COALESCE(payload->'responsavel'->>'cidade', cidade),
+      estado = COALESCE(payload->'responsavel'->>'estado', estado),
+      igreja = COALESCE(payload->'responsavel'->>'igreja', igreja),
+      nome_pai = COALESCE(payload->'responsavel'->>'nome_pai', nome_pai),
+      nome_mae = COALESCE(payload->'responsavel'->>'nome_mae', nome_mae)
+    WHERE id = v_resp_id;
+  END IF;
 
-  -- Insert responsavel
-  INSERT INTO public.responsaveis (
-    nome, cpf, telefone, whatsapp, email, endereco, bairro, cidade, estado, igreja, nome_pai, nome_mae
-  ) VALUES (
-    NULLIF(TRIM(v_responsavel->>'nome'), ''),
-    v_cpf,
-    NULLIF(TRIM(v_responsavel->>'telefone'), ''),
-    NULLIF(TRIM(v_responsavel->>'whatsapp'), ''),
-    NULLIF(TRIM(v_responsavel->>'email'), ''),
-    NULLIF(TRIM(v_responsavel->>'endereco'), ''),
-    NULLIF(TRIM(v_responsavel->>'bairro'), ''),
-    NULLIF(TRIM(v_responsavel->>'cidade'), ''),
-    NULLIF(TRIM(v_responsavel->>'estado'), ''),
-    NULLIF(TRIM(v_responsavel->>'igreja'), ''),
-    NULLIF(TRIM(v_responsavel->>'nome_pai'), ''),
-    NULLIF(TRIM(v_responsavel->>'nome_mae'), '')
-  )
-  RETURNING id INTO v_inscricao_id;
-
-  -- Insert crianca linked to responsavel
+  -- Insert crianca with ALL fields (saude, emergencia, autorizacoes included in table)
   INSERT INTO public.criancas (
-    responsavel_id, nome, data_nascimento, idade, sexo, serie_escolar, tamanho_camisa
+    responsavel_id, nome, data_nascimento, idade, sexo, serie_escolar, tamanho_camisa,
+    alergias, medicamentos, necessidades_especiais, restricoes_alimentares,
+    emergencia_nome, emergencia_telefone, emergencia_parentesco,
+    autoriza_participacao, autoriza_imagem, confirma_veracidade
   ) VALUES (
-    v_inscricao_id,
-    NULLIF(TRIM(v_crianca->>'nome'), ''),
-    NULLIF(TRIM(v_crianca->>'data_nascimento'), '')::DATE,
-    NULLIF(TRIM(v_crianca->>'idade'), '')::INT,
-    NULLIF(TRIM(v_crianca->>'sexo'), ''),
-    NULLIF(TRIM(v_crianca->>'serie_escolar'), ''),
-    NULLIF(TRIM(v_crianca->>'tamanho_camisa'), '')
-  );
+    v_resp_id,
+    payload->'crianca'->>'nome',
+    (payload->'crianca'->>'data_nascimento')::DATE,
+    (payload->'crianca'->>'idade')::INT,
+    payload->'crianca'->>'sexo',
+    payload->'crianca'->>'serie_escolar',
+    payload->'crianca'->>'tamanho_camisa',
+    payload->'saude'->>'alergias',
+    payload->'saude'->>'medicamentos',
+    payload->'saude'->>'necessidades_especiais',
+    payload->'saude'->>'restricoes_alimentares',
+    payload->'emergencia'->>'nome',
+    payload->'emergencia'->>'telefone',
+    payload->'emergencia'->>'parentesco',
+    COALESCE((payload->'autorizacoes'->>'participacao')::BOOLEAN, false),
+    COALESCE((payload->'autorizacoes'->>'imagem')::BOOLEAN, false),
+    COALESCE((payload->'autorizacoes'->>'veracidade')::BOOLEAN, false)
+  ) RETURNING id INTO v_crc_id;
 
-  -- Insert saude
-  INSERT INTO public.saude (responsavel_id, alergias, medicamentos, necessidades_especiais, restricoes_alimentares)
-  VALUES (
-    v_inscricao_id,
-    NULLIF(TRIM(v_saude->>'alergias'), ''),
-    NULLIF(TRIM(v_saude->>'medicamentos'), ''),
-    NULLIF(TRIM(v_saude->>'necessidades_especiais'), ''),
-    NULLIF(TRIM(v_saude->>'restricoes_alimentares'), '')
-  );
+  -- Generate protocolo (original format)
+  v_protocolo := 'EBF26-' || upper(substr(replace(v_crc_id::TEXT, '-', ''), 1, 8));
 
-  -- Insert emergencia
-  INSERT INTO public.emergencia (responsavel_id, nome, telefone, parentesco)
-  VALUES (
-    v_inscricao_id,
-    NULLIF(TRIM(v_emergencia->>'nome'), ''),
-    NULLIF(TRIM(v_emergencia->>'telefone'), ''),
-    NULLIF(TRIM(v_emergencia->>'parentesco'), '')
-  );
+  -- Insert into inscricoes (original logic)
+  INSERT INTO public.inscricoes (crianca_id, protocolo) VALUES (v_crc_id, v_protocolo);
 
-  -- Insert autorizacoes
-  INSERT INTO public.autorizacoes (responsavel_id, participacao, imagem, veracidade)
-  VALUES (
-    v_inscricao_id,
-    (v_autorizacoes->>'participacao')::BOOLEAN,
-    (v_autorizacoes->>'imagem')::BOOLEAN,
-    (v_autorizacoes->>'veracidade')::BOOLEAN
-  );
-
-  -- Update protocolo
-  UPDATE public.responsaveis SET protocolo = v_protocolo WHERE id = v_inscricao_id;
-
-  RETURN jsonb_build_object('protocolo', v_protocolo, 'id', v_inscricao_id);
+  RETURN jsonb_build_object('protocolo', v_protocolo, 'crianca_id', v_crc_id, 'responsavel_id', v_resp_id);
 END;
 $$;
