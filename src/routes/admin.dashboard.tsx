@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/integrations/supabase/auth-context";
 import { LogoUCADMA, LogoAD } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -173,6 +174,12 @@ function fmtDate(value: string) {
 
 function Dashboard() {
   const navigate = useNavigate();
+  const {
+    isAdmin: ctxIsAdmin,
+    isLoading: ctxLoading,
+    user: ctxUser,
+    session: ctxSession,
+  } = useAuth();
   const [loading, setLoading] = useState(true);
   const [admin, setAdmin] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -246,11 +253,32 @@ function Dashboard() {
   }
 
   useEffect(() => {
+    console.log("[Dashboard] entrada no dashboard");
     let active = true;
     (async () => {
+      // 1. Try AuthContext first (fast path, avoids race condition)
+      if (ctxIsAdmin && ctxUser) {
+        console.log("[Dashboard] auth context já tem admin:", ctxUser.id);
+        setAdmin(true);
+        setAuthUserId(ctxUser.id);
+        await loadRows();
+        if (!active) return;
+        setLoading(false);
+        return;
+      }
+
+      // 2. If AuthContext is still loading, wait briefly
+      if (ctxLoading) {
+        console.log("[Dashboard] aguardando AuthContext carregar...");
+      }
+
+      // 3. Fallback: check session directly via supabase client
+      console.log("[Dashboard] verificando sessão via supabase client...");
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (!active) return;
+
       if (sessionError) {
+        console.log("[Dashboard] erro ao carregar sessão:", sessionError.message);
         toast.error(sessionError.message);
         navigate({ to: "/admin" });
         return;
@@ -258,11 +286,14 @@ function Dashboard() {
 
       const session = sessionData.session;
       if (!session) {
+        console.log("[Dashboard] sessão não encontrada, redirecionando para /admin");
         navigate({ to: "/admin" });
         return;
       }
 
+      console.log("[Dashboard] sessão carregada:", session.user.id);
       const uid = session.user.id;
+      console.log("[Dashboard] verificando papel admin...");
       const { data: isAdmin, error: roleError } = await supabase.rpc("has_role", {
         _user_id: uid,
         _role: "admin",
@@ -270,12 +301,14 @@ function Dashboard() {
       if (!active) return;
 
       if (roleError || !isAdmin) {
+        console.log("[Dashboard] papel admin negado:", roleError?.message);
         await supabase.auth.signOut();
         toast.error("Acesso administrativo negado.");
         navigate({ to: "/admin" });
         return;
       }
 
+      console.log("[Dashboard] papel admin confirmado");
       setAdmin(true);
       setAuthUserId(uid);
       await loadRows();
@@ -286,7 +319,7 @@ function Dashboard() {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [navigate, ctxIsAdmin, ctxLoading, ctxUser]);
 
   async function logout() {
     await supabase.auth.signOut();

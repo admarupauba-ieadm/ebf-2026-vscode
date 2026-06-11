@@ -8,6 +8,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { Search } from "lucide-react";
 import { toast } from "sonner";
 
+type ConsultaResult = {
+  protocolo: string;
+  crianca_nome: string;
+  crianca_idade: number | string;
+  crianca_sexo: string;
+  status: string;
+  responsavel_nome: string;
+  responsavel_telefone: string;
+  igreja: string;
+};
+
 export const Route = createFileRoute("/consulta")({
   head: () => ({ meta: [{ title: "Consultar Inscrição · EBF 2026" }] }),
   component: ConsultaPage,
@@ -15,7 +26,7 @@ export const Route = createFileRoute("/consulta")({
 
 function ConsultaPage() {
   const [termo, setTermo] = useState("");
-  const [results, setResults] = useState<any[] | null>(null);
+  const [results, setResults] = useState<ConsultaResult[] | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function buscar(e: React.FormEvent) {
@@ -28,7 +39,7 @@ function ConsultaPage() {
       toast.error(error.message);
       return;
     }
-    setResults(data || []);
+    setResults((data || []) as ConsultaResult[]);
   }
 
   return (

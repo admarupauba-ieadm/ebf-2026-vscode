@@ -33,6 +33,15 @@ type FormData = {
   autorizacoes: { participacao: boolean; imagem: boolean; veracidade: boolean };
 };
 
+type StepProps<K extends keyof FormData> = {
+  data: FormData[K];
+  onChange: (patch: Partial<FormData[K]>) => void;
+};
+
+type CriarInscricaoResult = {
+  protocolo?: string;
+};
+
 const EMPTY: FormData = {
   responsavel: {
     nome: "",
@@ -147,7 +156,7 @@ function InscricaoPage() {
       toast.error("Erro ao enviar: " + error.message);
       return;
     }
-    const protocolo = (res as any)?.protocolo as string;
+    const protocolo = (res as CriarInscricaoResult | null)?.protocolo ?? "";
     localStorage.removeItem(STORAGE_KEY);
     navigate({ to: "/inscricao/sucesso", search: { protocolo } });
   }
@@ -197,26 +206,28 @@ function InscricaoPage() {
             name="website"
             tabIndex={-1}
             autoComplete="off"
-            style={{ position: "absolute", left: "-9999px", opacity: 0, height: 0, width: 0, overflow: "hidden" }}
+            style={{
+              position: "absolute",
+              left: "-9999px",
+              opacity: 0,
+              height: 0,
+              width: 0,
+              overflow: "hidden",
+            }}
             defaultValue=""
           />
           {step === 0 && (
-            <StepResponsavel
-              data={data.responsavel}
-              onChange={(p: any) => update("responsavel", p)}
-            />
+            <StepResponsavel data={data.responsavel} onChange={(p) => update("responsavel", p)} />
           )}
-          {step === 1 && (
-            <StepCrianca data={data.crianca} onChange={(p: any) => update("crianca", p)} />
-          )}
-          {step === 2 && <StepSaude data={data.saude} onChange={(p: any) => update("saude", p)} />}
+          {step === 1 && <StepCrianca data={data.crianca} onChange={(p) => update("crianca", p)} />}
+          {step === 2 && <StepSaude data={data.saude} onChange={(p) => update("saude", p)} />}
           {step === 3 && (
-            <StepEmergencia data={data.emergencia} onChange={(p: any) => update("emergencia", p)} />
+            <StepEmergencia data={data.emergencia} onChange={(p) => update("emergencia", p)} />
           )}
           {step === 4 && (
             <StepAutorizacoes
               data={data.autorizacoes}
-              onChange={(p: any) => update("autorizacoes", p)}
+              onChange={(p) => update("autorizacoes", p)}
             />
           )}
           {step === 5 && (
@@ -291,7 +302,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="font-display font-bold text-2xl mb-4 gold-text">{children}</h2>;
 }
 
-function StepResponsavel({ data, onChange }: any) {
+function StepResponsavel({ data, onChange }: StepProps<"responsavel">) {
   return (
     <div>
       <SectionTitle>Dados do Responsável</SectionTitle>
@@ -345,7 +356,7 @@ function StepResponsavel({ data, onChange }: any) {
   );
 }
 
-function StepCrianca({ data, onChange }: any) {
+function StepCrianca({ data, onChange }: StepProps<"crianca">) {
   return (
     <div>
       <SectionTitle>Dados da Criança</SectionTitle>
@@ -406,7 +417,7 @@ function StepCrianca({ data, onChange }: any) {
   );
 }
 
-function StepSaude({ data, onChange }: any) {
+function StepSaude({ data, onChange }: StepProps<"saude">) {
   return (
     <div>
       <SectionTitle>Saúde</SectionTitle>
@@ -440,7 +451,7 @@ function StepSaude({ data, onChange }: any) {
   );
 }
 
-function StepEmergencia({ data, onChange }: any) {
+function StepEmergencia({ data, onChange }: StepProps<"emergencia">) {
   return (
     <div>
       <SectionTitle>Contato de Emergência</SectionTitle>
@@ -462,7 +473,7 @@ function StepEmergencia({ data, onChange }: any) {
   );
 }
 
-function StepAutorizacoes({ data, onChange }: any) {
+function StepAutorizacoes({ data, onChange }: StepProps<"autorizacoes">) {
   const items = [
     {
       key: "participacao",
@@ -481,7 +492,7 @@ function StepAutorizacoes({ data, onChange }: any) {
             className="flex gap-3 p-4 rounded-xl border border-[color:var(--gold)]/30 hover:bg-[color:var(--gold)]/10 cursor-pointer transition"
           >
             <Checkbox
-              checked={(data as any)[key]}
+              checked={data[key]}
               onCheckedChange={(v) => onChange({ [key]: !!v })}
               className="mt-0.5"
             />
