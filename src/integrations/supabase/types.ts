@@ -309,6 +309,10 @@ export type Database = {
         }[];
       };
       criar_inscricao: { Args: { payload: Json }; Returns: Json };
+      verificar_inscricao_duplicada: {
+        Args: { p_responsavel_cpf: string; p_crianca_nome: string; p_data_nascimento: string };
+        Returns: Json;
+      };
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"];
@@ -317,6 +321,10 @@ export type Database = {
         Returns: boolean;
       };
       is_staff: { Args: { _user_id: string }; Returns: boolean };
+      admin_delete_inscricao: {
+        Args: { p_inscricao_id: string };
+        Returns: Json;
+      };
     };
     Enums: {
       app_role: "admin" | "equipe";

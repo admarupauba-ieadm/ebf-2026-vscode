@@ -44,8 +44,6 @@ function AdminAuth() {
         toast.success("Login realizado com sucesso!");
         navigate({ to: "/admin/dashboard" });
       }
-    } catch (error) {
-      console.error("[AdminLogin] submit: erro inesperado", error);
     } finally {
       setLocalLoading(false);
     }

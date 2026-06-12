@@ -14,8 +14,10 @@ import {
 } from "@/components/ui/select";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -33,6 +35,9 @@ import {
   FileType2,
   Printer,
   CheckCircle2,
+  AlertTriangle,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -70,9 +75,19 @@ type ExportScope = "completa" | "filtrada" | "turma" | "faixa";
 type AgeRangeFilter = "all" | "0-3" | "4-6" | "7-9" | "10-12" | "13+";
 type StatusOption = "Inscrito" | "Confirmado" | "Presente" | "Cancelado";
 type PresenceOption = "presente" | "faltou" | "justificado";
+type ExportAction = "csv" | "xlsx" | "pdf";
 
 const STATUS_OPTIONS: StatusOption[] = ["Inscrito", "Confirmado", "Presente", "Cancelado"];
 const PRESENCE_OPTIONS: PresenceOption[] = ["presente", "faltou", "justificado"];
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+
+const AGE_RANGE_MAP: Record<Exclude<AgeRangeFilter, "all">, { min: number; max?: number }> = {
+  "0-3": { min: 0, max: 3 },
+  "4-6": { min: 4, max: 6 },
+  "7-9": { min: 7, max: 9 },
+  "10-12": { min: 10, max: 12 },
+  "13+": { min: 13 },
+};
 
 const AGE_RANGE_OPTIONS: { value: AgeRangeFilter; label: string }[] = [
   { value: "all", label: "Todas as idades" },
@@ -117,24 +132,6 @@ type RawInscricao = {
   crianca: RawCrianca;
 };
 
-type ExportRow = {
-  protocolo: string;
-  crianca: string;
-  idade: number;
-  sexo: string;
-  responsavel: string;
-  telefone: string;
-  observacoes_medicas: string;
-  contato_emergencia: string;
-  status: StatusOption;
-  turma: string;
-  data_inscricao: string;
-};
-
-function normalizeDigits(input: string | null | undefined) {
-  return (input || "").replace(/\D/g, "");
-}
-
 function normalizeStatus(input: string | null | undefined): StatusOption {
   const value = (input || "").trim().toLowerCase();
   if (value.startsWith("confirm")) return "Confirmado";
@@ -178,7 +175,6 @@ function Dashboard() {
     isAdmin: ctxIsAdmin,
     isLoading: ctxLoading,
     user: ctxUser,
-    session: ctxSession,
   } = useAuth();
   const [loading, setLoading] = useState(true);
   const [admin, setAdmin] = useState(false);
@@ -198,18 +194,199 @@ function Dashboard() {
 
   const [detailRow, setDetailRow] = useState<DashboardRow | null>(null);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loadingPage, setLoadingPage] = useState(false);
+
   const [exportScope, setExportScope] = useState<ExportScope>("filtrada");
   const [exportTurma, setExportTurma] = useState("all");
   const [exportFaixa, setExportFaixa] = useState<AgeRangeFilter>("all");
-  const [exporting, setExporting] = useState(false);
+  const [exportingType, setExportingType] = useState<ExportAction | null>(null);
 
-  async function loadRows() {
-    const { data, error } = await supabase
+  const [pendingStatusChange, setPendingStatusChange] = useState<{
+    row: DashboardRow;
+    newStatus: StatusOption;
+  } | null>(null);
+
+  const [pendingDelete, setPendingDelete] = useState<DashboardRow | null>(null);
+
+  const SELECT_INSCRICOES = `id, protocolo, status, data_inscricao, crianca:criancas(id, nome, idade, sexo, turma, alergias, medicamentos, necessidades_especiais, restricoes_alimentares, emergencia_nome, emergencia_telefone, emergencia_parentesco, responsavel:responsaveis(nome, cpf, telefone, email, igreja), presencas:presencas(data, status))` as const;
+
+  function mapRawToRow(item: RawInscricao): DashboardRow | null {
+    const c = item.crianca;
+    if (!c) return null;
+    return {
+      inscricaoId: item.id,
+      criancaId: c.id,
+      protocolo: item.protocolo,
+      status: normalizeStatus(item.status),
+      dataInscricao: item.data_inscricao,
+      nomeCrianca: c.nome,
+      idade: c.idade,
+      sexo: normalizeSexo(c.sexo),
+      turma: c.turma,
+      alergias: c.alergias,
+      medicamentos: c.medicamentos,
+      necessidadesEspeciais: c.necessidades_especiais,
+      restricoesAlimentares: c.restricoes_alimentares,
+      emergenciaNome: c.emergencia_nome,
+      emergenciaTelefone: c.emergencia_telefone,
+      emergenciaParentesco: c.emergencia_parentesco,
+      responsavelNome: c.responsavel?.nome || null,
+      responsavelCpf: c.responsavel?.cpf || null,
+      responsavelTelefone: c.responsavel?.telefone || null,
+      responsavelEmail: c.responsavel?.email || null,
+      responsavelIgreja: c.responsavel?.igreja || null,
+      presencas: (c.presencas || [])
+        .filter((p): p is { data: string; status: PresenceOption } => !!p.data && !!p.status)
+        .map((p) => ({ data: p.data, status: p.status })),
+    } satisfies DashboardRow;
+  }
+
+  async function resolveMatchingInscricaoIds(): Promise<{
+    inscricaoIds: string[] | null;
+    hasFilters: boolean;
+  }> {
+    const hasSearch = search.trim().length > 0;
+    const hasAgeFilter = ageFilter !== "all";
+    const hasTurmaFilter = turmaFilter !== "all";
+    const hasSexoFilter = sexoFilter !== "all";
+
+    if (!hasSearch && !hasAgeFilter && !hasTurmaFilter && !hasSexoFilter) {
+      return { inscricaoIds: null, hasFilters: false };
+    }
+
+    const idSet = new Set<string>();
+
+    // Phase 1a: text search — OR across protocolo, crianca.nome, responsavel.{nome,cpf,telefone}
+    if (hasSearch) {
+      const term = search.trim();
+
+      // Search protocolo on inscricoes
+      const { data: pData } = await supabase
+        .from("inscricoes")
+        .select("id")
+        .ilike("protocolo", `%${term}%`);
+      for (const r of pData || []) idSet.add(r.id);
+
+      // Search crianca.nome
+      const { data: cData } = await supabase
+        .from("criancas")
+        .select("id")
+        .ilike("nome", `%${term}%`);
+      if (cData?.length) {
+        const { data: ciData } = await supabase
+          .from("inscricoes")
+          .select("id")
+          .in("crianca_id", cData.map((c) => c.id));
+        for (const r of ciData || []) idSet.add(r.id);
+      }
+
+      // Search responsavel.{nome,cpf,telefone}
+      const { data: rData } = await supabase
+        .from("responsaveis")
+        .select("id")
+        .or(
+          `nome.ilike.%${term}%,cpf.ilike.%${term}%,telefone.ilike.%${term}%`,
+        );
+      if (rData?.length) {
+        const { data: rcData } = await supabase
+          .from("criancas")
+          .select("id")
+          .in("responsavel_id", rData.map((r) => r.id));
+        if (rcData?.length) {
+          const { data: riData } = await supabase
+            .from("inscricoes")
+            .select("id")
+            .in("crianca_id", rcData.map((c) => c.id));
+          for (const r of riData || []) idSet.add(r.id);
+        }
+      }
+    }
+
+    // Phase 1b: age/turma/sexo filters — AND com text search e entre si
+    if (hasAgeFilter || hasTurmaFilter || hasSexoFilter) {
+      let cq = supabase.from("criancas").select("id");
+
+      if (hasAgeFilter) {
+        const range = AGE_RANGE_MAP[ageFilter as Exclude<AgeRangeFilter, "all">];
+        cq = cq.gte("idade", range.min);
+        if (range.max !== undefined) cq = cq.lte("idade", range.max);
+      }
+      if (hasTurmaFilter) {
+        cq = cq.eq("turma", turmaFilter);
+      }
+      if (hasSexoFilter) {
+        cq = cq.eq("sexo", sexoFilter);
+      }
+
+      const { data: filteredCriancas } = await cq;
+      const validCriancaIds = new Set(filteredCriancas?.map((c) => c.id) || []);
+
+      if (validCriancaIds.size === 0) {
+        return { inscricaoIds: [], hasFilters: true };
+      }
+
+      // Intersect: se idSet tem IDs de text search, filtrar por crianca_id
+      if (idSet.size > 0) {
+        const { data: matchedInscricoes } = await supabase
+          .from("inscricoes")
+          .select("id, crianca_id")
+          .in("id", [...idSet]);
+
+        const surviving = new Set<string>();
+        for (const ins of matchedInscricoes || []) {
+          if (validCriancaIds.has(ins.crianca_id)) surviving.add(ins.id);
+        }
+        return { inscricaoIds: [...surviving], hasFilters: true };
+      }
+
+      // Only age/turma/sexo (no text search)
+      const { data: insData } = await supabase
+        .from("inscricoes")
+        .select("id")
+        .in("crianca_id", [...validCriancaIds]);
+      for (const r of insData || []) idSet.add(r.id);
+    }
+
+    return { inscricaoIds: [...idSet], hasFilters: true };
+  }
+
+  async function loadRows(page: number, size: number) {
+    setLoadingPage(true);
+
+    const start = (page - 1) * size;
+    const end = start + size - 1;
+
+    const { inscricaoIds, hasFilters } = await resolveMatchingInscricaoIds();
+
+    if (hasFilters && inscricaoIds !== null && inscricaoIds.length === 0) {
+      setRows([]);
+      setTotalCount(0);
+      setLoadingPage(false);
+      return;
+    }
+
+    let query = supabase
       .from("inscricoes")
-      .select(
-        "id, protocolo, status, data_inscricao, crianca:criancas(id, nome, idade, sexo, turma, alergias, medicamentos, necessidades_especiais, restricoes_alimentares, emergencia_nome, emergencia_telefone, emergencia_parentesco, responsavel:responsaveis(nome, cpf, telefone, email, igreja), presencas:presencas(data, status))",
-      )
-      .order("data_inscricao", { ascending: false });
+      .select(SELECT_INSCRICOES, { count: "exact" })
+      .order("data_inscricao", { ascending: false })
+      .range(start, end);
+
+    if (inscricaoIds !== null) {
+      query = query.in("id", inscricaoIds);
+    }
+
+    if (dateFromFilter) {
+      query = query.gte("data_inscricao", `${dateFromFilter}T00:00:00`);
+    }
+    if (dateToFilter) {
+      query = query.lte("data_inscricao", `${dateToFilter}T23:59:59`);
+    }
+
+    const { data, error, count } = await query;
+    setLoadingPage(false);
 
     if (error) {
       toast.error(error.message);
@@ -217,101 +394,51 @@ function Dashboard() {
     }
 
     const mapped: DashboardRow[] = ((data || []) as RawInscricao[])
-      .map((item) => {
-        const c = item.crianca;
-        if (!c) return null;
-        return {
-          inscricaoId: item.id,
-          criancaId: c.id,
-          protocolo: item.protocolo,
-          status: normalizeStatus(item.status),
-          dataInscricao: item.data_inscricao,
-          nomeCrianca: c.nome,
-          idade: c.idade,
-          sexo: normalizeSexo(c.sexo),
-          turma: c.turma,
-          alergias: c.alergias,
-          medicamentos: c.medicamentos,
-          necessidadesEspeciais: c.necessidades_especiais,
-          restricoesAlimentares: c.restricoes_alimentares,
-          emergenciaNome: c.emergencia_nome,
-          emergenciaTelefone: c.emergencia_telefone,
-          emergenciaParentesco: c.emergencia_parentesco,
-          responsavelNome: c.responsavel?.nome || null,
-          responsavelCpf: c.responsavel?.cpf || null,
-          responsavelTelefone: c.responsavel?.telefone || null,
-          responsavelEmail: c.responsavel?.email || null,
-          responsavelIgreja: c.responsavel?.igreja || null,
-          presencas: (c.presencas || [])
-            .filter((p): p is { data: string; status: PresenceOption } => !!p.data && !!p.status)
-            .map((p) => ({ data: p.data, status: p.status })),
-        } satisfies DashboardRow;
-      })
+      .map((item) => mapRawToRow(item))
       .filter((item: DashboardRow | null): item is DashboardRow => !!item);
 
     setRows(mapped);
+    setTotalCount(count ?? 0);
   }
 
   useEffect(() => {
-    console.log("[Dashboard] entrada no dashboard");
     let active = true;
     (async () => {
-      // 1. Try AuthContext first (fast path, avoids race condition)
-      if (ctxIsAdmin && ctxUser) {
-        console.log("[Dashboard] auth context já tem admin:", ctxUser.id);
-        setAdmin(true);
-        setAuthUserId(ctxUser.id);
-        await loadRows();
+      if (!admin) {
+        if (ctxIsAdmin && ctxUser) {
+          setAdmin(true);
+          setAuthUserId(ctxUser.id);
+          if (!active) return;
+          setLoading(false);
+          return;
+        }
+
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         if (!active) return;
-        setLoading(false);
-        return;
+
+        if (sessionError || !sessionData.session) {
+          navigate({ to: "/admin" });
+          return;
+        }
+
+        const uid = sessionData.session.user.id;
+        const { data: isAdmin, error: roleError } = await supabase.rpc("has_role", {
+          _user_id: uid,
+          _role: "admin",
+        });
+        if (!active) return;
+
+        if (roleError || !isAdmin) {
+          await supabase.auth.signOut();
+          toast.error("Acesso administrativo negado.");
+          navigate({ to: "/admin" });
+          return;
+        }
+
+        setAdmin(true);
+        setAuthUserId(uid);
       }
 
-      // 2. If AuthContext is still loading, wait briefly
-      if (ctxLoading) {
-        console.log("[Dashboard] aguardando AuthContext carregar...");
-      }
-
-      // 3. Fallback: check session directly via supabase client
-      console.log("[Dashboard] verificando sessão via supabase client...");
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (!active) return;
-
-      if (sessionError) {
-        console.log("[Dashboard] erro ao carregar sessão:", sessionError.message);
-        toast.error(sessionError.message);
-        navigate({ to: "/admin" });
-        return;
-      }
-
-      const session = sessionData.session;
-      if (!session) {
-        console.log("[Dashboard] sessão não encontrada, redirecionando para /admin");
-        navigate({ to: "/admin" });
-        return;
-      }
-
-      console.log("[Dashboard] sessão carregada:", session.user.id);
-      const uid = session.user.id;
-      console.log("[Dashboard] verificando papel admin...");
-      const { data: isAdmin, error: roleError } = await supabase.rpc("has_role", {
-        _user_id: uid,
-        _role: "admin",
-      });
-      if (!active) return;
-
-      if (roleError || !isAdmin) {
-        console.log("[Dashboard] papel admin negado:", roleError?.message);
-        await supabase.auth.signOut();
-        toast.error("Acesso administrativo negado.");
-        navigate({ to: "/admin" });
-        return;
-      }
-
-      console.log("[Dashboard] papel admin confirmado");
-      setAdmin(true);
-      setAuthUserId(uid);
-      await loadRows();
       if (!active) return;
       setLoading(false);
     })();
@@ -320,6 +447,18 @@ function Dashboard() {
       active = false;
     };
   }, [navigate, ctxIsAdmin, ctxLoading, ctxUser]);
+
+  useEffect(() => {
+    if (!admin) return;
+    const timer = setTimeout(() => {
+      void loadRows(currentPage, pageSize);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [admin, currentPage, pageSize, search, ageFilter, turmaFilter, sexoFilter, dateFromFilter, dateToFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, ageFilter, turmaFilter, sexoFilter, dateFromFilter, dateToFilter, pageSize]);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -334,42 +473,8 @@ function Dashboard() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [rows]);
 
-  const filteredRows = useMemo(() => {
-    const lower = search.trim().toLowerCase();
-    const digits = normalizeDigits(search);
-
-    return rows.filter((row) => {
-      if (lower) {
-        const matchesText =
-          row.protocolo.toLowerCase().includes(lower) ||
-          row.nomeCrianca.toLowerCase().includes(lower) ||
-          (row.responsavelNome || "").toLowerCase().includes(lower);
-        const matchesDigits =
-          (digits && normalizeDigits(row.responsavelCpf).includes(digits)) ||
-          (digits && normalizeDigits(row.responsavelTelefone).includes(digits));
-        if (!matchesText && !matchesDigits) return false;
-      }
-
-      if (ageFilter !== "all" && rangeFromAge(row.idade) !== ageFilter) return false;
-      if (turmaFilter !== "all" && (row.turma || "") !== turmaFilter) return false;
-      if (sexoFilter !== "all" && row.sexo !== sexoFilter) return false;
-
-      if (dateFromFilter) {
-        const fromTs = new Date(`${dateFromFilter}T00:00:00`).getTime();
-        if (new Date(row.dataInscricao).getTime() < fromTs) return false;
-      }
-
-      if (dateToFilter) {
-        const toTs = new Date(`${dateToFilter}T23:59:59`).getTime();
-        if (new Date(row.dataInscricao).getTime() > toTs) return false;
-      }
-
-      return true;
-    });
-  }, [rows, search, ageFilter, turmaFilter, sexoFilter, dateFromFilter, dateToFilter]);
-
   const stats = useMemo(() => {
-    const source = filteredRows;
+    const source = rows;
     const total = source.length;
     const masc = source.filter((r) => r.sexo === "masculino").length;
     const fem = source.filter((r) => r.sexo === "feminino").length;
@@ -395,11 +500,25 @@ function Dashboard() {
     }
 
     return { total, masc, fem, comAlergia, faixa, turma };
-  }, [filteredRows]);
+  }, [rows]);
 
   function currentPresenceStatus(row: DashboardRow) {
     return row.presencas.find((p) => p.data === attendanceDate)?.status || "";
   }
+
+  const adminName = useMemo(() => {
+    return ctxUser?.user_metadata?.name
+      || ctxUser?.user_metadata?.full_name
+      || ctxUser?.email
+      || "";
+  }, [ctxUser]);
+
+  const lastAccess = useMemo(() => {
+    if (!ctxUser?.last_sign_in_at) return null;
+    const d = new Date(ctxUser.last_sign_in_at);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }, [ctxUser]);
 
   async function updateStatus(inscricaoId: string, newStatus: StatusOption) {
     setSavingStatusId(inscricaoId);
@@ -418,6 +537,41 @@ function Dashboard() {
       old.map((row) => (row.inscricaoId === inscricaoId ? { ...row, status: newStatus } : row)),
     );
     toast.success("Status atualizado.");
+  }
+
+  async function confirmStatusChange() {
+    if (!pendingStatusChange) return;
+    await updateStatus(pendingStatusChange.row.inscricaoId, pendingStatusChange.newStatus);
+    setPendingStatusChange(null);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setSavingStatusId(pendingDelete.inscricaoId);
+    const { data, error } = await supabase.rpc("admin_delete_inscricao", {
+      p_inscricao_id: pendingDelete.inscricaoId,
+    });
+    setSavingStatusId(null);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    const result = data as {
+      success: boolean;
+      inscricao_removida: boolean;
+      crianca_removida: boolean;
+      responsavel_removido: boolean;
+    };
+
+    setRows((old) => old.filter((r) => r.inscricaoId !== pendingDelete.inscricaoId));
+
+    let msg = "Inscrição removida.";
+    if (result.crianca_removida) msg += " Dados da criança removidos.";
+    if (result.responsavel_removido) msg += " Dados do responsável removidos.";
+    toast.success(msg);
+    setPendingDelete(null);
   }
 
   async function registerPresence(row: DashboardRow, presenceStatus: PresenceOption) {
@@ -475,19 +629,47 @@ function Dashboard() {
     return parts.join(" · ") || "-";
   }
 
-  function rowsForExportScope(): DashboardRow[] {
-    if (exportScope === "completa") return rows;
-    if (exportScope === "filtrada") return filteredRows;
-    if (exportScope === "turma") {
-      if (exportTurma === "all") return rows;
-      return rows.filter((r) => (r.turma || "") === exportTurma);
+  async function fetchAllRowsForExport(): Promise<DashboardRow[]> {
+    const { inscricaoIds } = await resolveMatchingInscricaoIds();
+
+    let query = supabase
+      .from("inscricoes")
+      .select(SELECT_INSCRICOES)
+      .order("data_inscricao", { ascending: false })
+      .limit(5000);
+
+    if (inscricaoIds !== null) {
+      if (inscricaoIds.length === 0) return [];
+      query = query.in("id", inscricaoIds);
     }
-    if (exportFaixa === "all") return rows;
-    return rows.filter((r) => rangeFromAge(r.idade) === exportFaixa);
+
+    if (dateFromFilter) {
+      query = query.gte("data_inscricao", `${dateFromFilter}T00:00:00`);
+    }
+    if (dateToFilter) {
+      query = query.lte("data_inscricao", `${dateToFilter}T23:59:59`);
+    }
+
+    const { data } = await query;
+    return ((data || []) as RawInscricao[])
+      .map((item) => mapRawToRow(item))
+      .filter((item): item is DashboardRow => !!item);
   }
 
-  function exportRowsModel(): ExportRow[] {
-    return rowsForExportScope().map((row) => ({
+  function filterExportRows(allRows: DashboardRow[]): DashboardRow[] {
+    if (exportScope === "completa") return allRows;
+    if (exportScope === "filtrada") return allRows;
+    if (exportScope === "turma") {
+      if (exportTurma === "all") return allRows;
+      return allRows.filter((r) => (r.turma || "") === exportTurma);
+    }
+    if (exportFaixa === "all") return allRows;
+    return allRows.filter((r) => rangeFromAge(r.idade) === exportFaixa);
+  }
+
+  function buildExportModel(allRows: DashboardRow[]) {
+    const scoped = filterExportRows(allRows);
+    return scoped.map((row) => ({
       protocolo: row.protocolo,
       crianca: row.nomeCrianca,
       idade: row.idade,
@@ -503,15 +685,17 @@ function Dashboard() {
   }
 
   async function exportCsv() {
-    setExporting(true);
+    setExportingType("csv");
     try {
-      const model = exportRowsModel();
+      const allRows = await fetchAllRowsForExport();
+      const model = buildExportModel(allRows);
+
       if (model.length === 0) {
         toast.error("Nenhum registro para exportar.");
         return;
       }
 
-      const headers = Object.keys(model[0]) as (keyof ExportRow)[];
+      const headers = Object.keys(model[0]) as (keyof (typeof model)[0])[];
       const body = model.map((row) => headers.map((h) => csvEscape(row[h])).join(","));
       const csv = [headers.join(","), ...body].join("\n");
 
@@ -523,15 +707,19 @@ function Dashboard() {
       a.click();
       URL.revokeObjectURL(url);
       toast.success("CSV exportado.");
+    } catch {
+      toast.error("Falha ao gerar CSV.");
     } finally {
-      setExporting(false);
+      setExportingType(null);
     }
   }
 
   async function exportXlsx() {
-    setExporting(true);
+    setExportingType("xlsx");
     try {
-      const model = exportRowsModel();
+      const allRows = await fetchAllRowsForExport();
+      const model = buildExportModel(allRows);
+
       if (model.length === 0) {
         toast.error("Nenhum registro para exportar.");
         return;
@@ -543,18 +731,19 @@ function Dashboard() {
       XLSX.utils.book_append_sheet(wb, ws, "Inscricoes");
       XLSX.writeFile(wb, `ebf-2026-inscricoes-${exportScope}.xlsx`);
       toast.success("Excel exportado.");
-    } catch (error) {
-      console.error(error);
+    } catch {
       toast.error("Falha ao gerar Excel.");
     } finally {
-      setExporting(false);
+      setExportingType(null);
     }
   }
 
   async function exportPdf() {
-    setExporting(true);
+    setExportingType("pdf");
     try {
-      const model = exportRowsModel();
+      const allRows = await fetchAllRowsForExport();
+      const model = buildExportModel(allRows);
+
       if (model.length === 0) {
         toast.error("Nenhum registro para exportar.");
         return;
@@ -584,18 +773,20 @@ function Dashboard() {
 
       doc.save(`ebf-2026-inscricoes-${exportScope}.pdf`);
       toast.success("PDF exportado.");
-    } catch (error) {
-      console.error(error);
+    } catch {
       toast.error("Falha ao gerar PDF.");
     } finally {
-      setExporting(false);
+      setExportingType(null);
     }
   }
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Carregando painel administrativo...
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[color:var(--gold)]/30 border-t-[color:var(--gold-deep)]" />
+          <span>Carregando painel administrativo...</span>
+        </div>
       </div>
     );
   }
@@ -632,6 +823,16 @@ function Dashboard() {
           </Link>
           <div className="flex items-center gap-3">
             <LogoAD className="h-10 w-10 hidden sm:block" />
+            <div className="hidden sm:block text-right text-xs leading-tight">
+              <div className="font-medium text-foreground truncate max-w-[180px]">
+                {adminName}
+              </div>
+              {lastAccess && (
+                <div className="text-muted-foreground">
+                  Último acesso: {lastAccess}
+                </div>
+              )}
+            </div>
             <Button onClick={logout} variant="outline" size="sm">
               <LogOut className="h-4 w-4 mr-1.5" /> Sair
             </Button>
@@ -643,14 +844,14 @@ function Dashboard() {
         <div className="print-only">
           <h1 className="text-2xl font-bold">EBF 2026 - Lista de Inscrições</h1>
           <p className="text-sm">
-            Emissão: {new Date().toLocaleString("pt-BR")} · Registros: {filteredRows.length}
+            Emissão: {new Date().toLocaleString("pt-BR")} · Registros: {rows.length}
           </p>
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
-            { icon: Baby, label: "Total inscritos (filtro)", value: stats.total },
-            { icon: Users, label: "Total geral", value: rows.length },
+            { icon: Baby, label: "Nesta página", value: stats.total },
+            { icon: Users, label: "Total (filtros)", value: totalCount },
             { icon: BadgeCheck, label: "Meninos / Meninas", value: `${stats.masc} / ${stats.fem}` },
             { icon: Heart, label: "Com alerta de saúde", value: stats.comAlergia },
           ].map(({ icon: Icon, label, value }) => (
@@ -783,19 +984,36 @@ function Dashboard() {
             </Select>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={exportXlsx} disabled={exporting} className="flex-1">
-                <FileSpreadsheet className="h-4 w-4 mr-1.5" /> XLSX
+              <Button onClick={exportXlsx} disabled={!!exportingType} className="flex-1">
+                {exportingType === "xlsx" ? (
+                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Exportando...</>
+                ) : (
+                  <><FileSpreadsheet className="h-4 w-4 mr-1.5" /> XLSX</>
+                )}
               </Button>
               <Button
                 onClick={exportCsv}
-                disabled={exporting}
+                disabled={!!exportingType}
                 variant="secondary"
                 className="flex-1"
               >
-                <FileText className="h-4 w-4 mr-1.5" /> CSV
+                {exportingType === "csv" ? (
+                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Exportando...</>
+                ) : (
+                  <><FileText className="h-4 w-4 mr-1.5" /> CSV</>
+                )}
               </Button>
-              <Button onClick={exportPdf} disabled={exporting} variant="outline" className="flex-1">
-                <FileType2 className="h-4 w-4 mr-1.5" /> PDF
+              <Button
+                onClick={exportPdf}
+                disabled={!!exportingType}
+                variant="outline"
+                className="flex-1"
+              >
+                {exportingType === "pdf" ? (
+                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Exportando...</>
+                ) : (
+                  <><FileType2 className="h-4 w-4 mr-1.5" /> PDF</>
+                )}
               </Button>
             </div>
           </div>
@@ -816,7 +1034,12 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="glass-card rounded-2xl p-4">
+        <div className="glass-card rounded-2xl p-4 relative">
+          {loadingPage && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-black/60 rounded-2xl">
+              <div className="h-6 w-6 animate-spin rounded-full border-4 border-[color:var(--gold)]/30 border-t-[color:var(--gold-deep)]" />
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm admin-table">
               <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-[color:var(--gold)]/20">
@@ -835,7 +1058,7 @@ function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => (
+                {rows.map((row) => (
                   <tr
                     key={row.inscricaoId}
                     className="border-b border-[color:var(--gold)]/10 hover:bg-[color:var(--gold)]/5"
@@ -854,7 +1077,9 @@ function Dashboard() {
                       <div className="no-print">
                         <Select
                           value={row.status}
-                          onValueChange={(v) => updateStatus(row.inscricaoId, v as StatusOption)}
+                          onValueChange={(v) =>
+                            setPendingStatusChange({ row, newStatus: v as StatusOption })
+                          }
                           disabled={savingStatusId === row.inscricaoId}
                         >
                           <SelectTrigger className="h-8">
@@ -890,14 +1115,24 @@ function Dashboard() {
                       </Select>
                     </td>
                     <td className="py-3 px-2 no-print">
-                      <Button size="sm" variant="outline" onClick={() => setDetailRow(row)}>
-                        <Eye className="h-4 w-4 mr-1.5" /> Detalhes
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="outline" onClick={() => setDetailRow(row)}>
+                          <Eye className="h-4 w-4 mr-1.5" /> Detalhes
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setPendingDelete(row)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
 
-                {filteredRows.length === 0 && (
+                {rows.length === 0 && (
                   <tr>
                     <td colSpan={11} className="py-10 text-center text-muted-foreground">
                       Nenhuma inscrição encontrada para os filtros informados.
@@ -906,6 +1141,84 @@ function Dashboard() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Pagination */}
+        <div className="no-print flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 text-sm">
+          <div className="text-muted-foreground">
+            {totalCount > 0 ? (
+              <>
+                Mostrando{" "}
+                <span className="font-semibold text-foreground">
+                  {(currentPage - 1) * pageSize + 1}
+                  {"–"}
+                  {Math.min(currentPage * pageSize, totalCount)}
+                </span>{" "}
+                de{" "}
+                <span className="font-semibold text-foreground">{totalCount}</span>{" "}
+                inscritos
+              </>
+            ) : (
+              <span>Nenhum inscrito encontrado</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-xs">Por página:</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) => setPageSize(Number(v))}
+            >
+              <SelectTrigger className="h-8 w-20">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1 || loadingPage}
+            >
+              Primeira
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1 || loadingPage}
+            >
+              Anterior
+            </Button>
+            <span className="px-3 py-1 text-muted-foreground">
+              Pág. {currentPage}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => p + 1)}
+              disabled={currentPage * pageSize >= totalCount || loadingPage}
+            >
+              Próxima
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.max(1, Math.ceil(totalCount / pageSize)))}
+              disabled={currentPage * pageSize >= totalCount || loadingPage}
+            >
+              Última
+            </Button>
           </div>
         </div>
 
@@ -945,6 +1258,120 @@ function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Status change confirmation */}
+      <Dialog
+        open={!!pendingStatusChange}
+        onOpenChange={(open) => !open && setPendingStatusChange(null)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Alterar status</DialogTitle>
+            <DialogDescription>
+              Confirme a alteração de status da inscrição.
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingStatusChange && (
+            <div className="space-y-4 text-sm">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+                <div className="space-y-0.5">
+                  <p>
+                    <span className="font-medium">{pendingStatusChange.row.nomeCrianca}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Protocolo: {pendingStatusChange.row.protocolo}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Status atual</div>
+                  <div className="font-semibold">{pendingStatusChange.row.status}</div>
+                </div>
+                <div className="text-muted-foreground">→</div>
+                <div className="flex-1 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Novo status</div>
+                  <div className="font-semibold text-[color:var(--gold-deep)]">
+                    {pendingStatusChange.newStatus}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button
+              onClick={confirmStatusChange}
+              disabled={savingStatusId === pendingStatusChange?.row.inscricaoId}
+            >
+              {savingStatusId === pendingStatusChange?.row.inscricaoId ? (
+                <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Salvando...</>
+              ) : (
+                "Confirmar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation */}
+      <Dialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Excluir inscrição</DialogTitle>
+            <DialogDescription>
+              Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingDelete && (
+            <div className="space-y-4 text-sm">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
+                <div className="space-y-0.5">
+                  <p className="font-medium">{pendingDelete.nomeCrianca}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Protocolo: {pendingDelete.protocolo}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                <strong>ATENÇÃO:</strong> Esta ação excluirá permanentemente a
+                inscrição e poderá remover também os dados da criança e do
+                responsável caso não existam outros vínculos. Esta ação não pode
+                ser desfeita.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={savingStatusId === pendingDelete?.inscricaoId}
+            >
+              {savingStatusId === pendingDelete?.inscricaoId ? (
+                <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Excluindo...</>
+              ) : (
+                "Sim, excluir"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!detailRow} onOpenChange={(open) => !open && setDetailRow(null)}>
         <DialogContent className="max-w-3xl">

@@ -14,6 +14,18 @@ import { toast } from "sonner";
 import { LogoUCADMA, LogoAD } from "@/components/Brand";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { verifyTurnstile } from "@/lib/verify-turnstile";
+import {
+  formatCPF,
+  formatPhone,
+  isValidCPF,
+  isValidPhone,
+  calcIdade,
+  isValidIdade,
+  getMinDate,
+  getMaxDate,
+  stripNonDigits,
+  MSG,
+} from "@/lib/validators";
 
 export const Route = createFileRoute("/inscricao")({
   head: () => ({
@@ -37,6 +49,8 @@ type StepProps<K extends keyof FormData> = {
   data: FormData[K];
   onChange: (patch: Partial<FormData[K]>) => void;
 };
+
+type Errors = Record<string, string>;
 
 type CriarInscricaoResult = {
   protocolo?: string;
@@ -77,6 +91,7 @@ function InscricaoPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [data, setData] = useState<FormData>(EMPTY);
+  const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
   const startTimeRef = useRef(Date.now());
@@ -98,74 +113,121 @@ function InscricaoPage() {
   const update = <K extends keyof FormData>(section: K, patch: Partial<FormData[K]>) =>
     setData((d) => ({ ...d, [section]: { ...d[section], ...patch } }));
 
+  const clearError = (field: string) =>
+    setErrors((e) => {
+      const next = { ...e };
+      delete next[field];
+      return next;
+    });
+
+  const addError = (field: string, msg: string) =>
+    setErrors((e) => ({ ...e, [field]: msg }));
+
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const prev = () => setStep((s) => Math.max(s - 1, 0));
 
   function validate(): string | null {
+    const newErrors: Errors = {};
+
     if (step === 0) {
       const r = data.responsavel;
-      if (!r.nome || !r.cpf || !r.telefone) return "Preencha nome, CPF e telefone do responsável.";
+      if (!r.nome) newErrors["resp_nome"] = MSG.campoObrigatorio("Nome do responsável");
+      if (!r.cpf) newErrors["resp_cpf"] = MSG.cpfObrigatorio;
+      else if (!isValidCPF(r.cpf)) newErrors["resp_cpf"] = MSG.cpfInvalido;
+      if (!r.telefone) newErrors["resp_telefone"] = MSG.telefoneObrigatorio;
+      else if (!isValidPhone(r.telefone)) newErrors["resp_telefone"] = MSG.telefoneInvalido;
     }
+
     if (step === 1) {
       const c = data.crianca;
-      if (!c.nome || !c.data_nascimento || !c.sexo)
-        return "Preencha nome, data de nascimento e sexo da criança.";
+      if (!c.nome) newErrors["crianca_nome"] = MSG.campoObrigatorio("Nome da criança");
+      if (!c.data_nascimento) newErrors["crianca_data_nascimento"] = MSG.campoObrigatorio("Data de nascimento");
+      else {
+        const idade = calcIdade(c.data_nascimento);
+        if (idade === null) newErrors["crianca_data_nascimento"] = "Data de nascimento inválida.";
+        else if (!isValidIdade(idade)) newErrors["crianca_data_nascimento"] = MSG.idadeInvalida;
+      }
+      if (!c.sexo) newErrors["crianca_sexo"] = MSG.campoObrigatorio("Sexo");
     }
+
     if (step === 3) {
       const e = data.emergencia;
-      if (!e.nome || !e.telefone) return "Informe o contato de emergência.";
+      if (!e.nome) newErrors["emergencia_nome"] = MSG.campoObrigatorio("Nome do contato");
+      if (!e.telefone) newErrors["emergencia_telefone"] = MSG.telefoneObrigatorio;
+      else if (!isValidPhone(e.telefone)) newErrors["emergencia_telefone"] = MSG.telefoneInvalido;
     }
+
     if (step === 4) {
       const a = data.autorizacoes;
       if (!a.participacao || !a.veracidade)
-        return "É obrigatório autorizar a participação e confirmar veracidade.";
+        newErrors["autorizacoes"] = MSG.autorizacaoObrigatoria;
     }
-    return null;
+
+    setErrors(newErrors);
+    const first = Object.values(newErrors)[0] ?? null;
+    return first;
   }
 
   async function submit() {
     if (Date.now() - startTimeRef.current < 5000) {
-      toast.error("Formulário enviado muito rápido. Aguarde alguns segundos.");
+      toast.error(MSG.rapido);
       return;
     }
     if (honeypotRef.current?.value) {
-      toast.error("Erro de segurança. Tente novamente.");
+      toast.error(MSG.seguranca);
       return;
     }
     const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
     if (siteKey) {
       if (!turnstileToken) {
-        toast.error("Complete a verificação de segurança.");
+        toast.error(MSG.turnstile);
         return;
       }
       setSubmitting(true);
       const result = await verifyTurnstile({ data: { token: turnstileToken } });
       if (!result.success) {
-        toast.error(result.error || "Falha na verificação de segurança.");
+        toast.error(result.error || MSG.seguranca);
         setSubmitting(false);
         return;
       }
     }
     setSubmitting(true);
     const c = data.crianca;
-    const idade = c.idade || calcIdade(c.data_nascimento);
-    const payload = { ...data, crianca: { ...c, idade: String(idade) } };
+    const idade = calcIdade(c.data_nascimento);
+
+    const { data: dupCheck, error: dupError } = await supabase.rpc("verificar_inscricao_duplicada", {
+      p_responsavel_cpf: stripNonDigits(data.responsavel.cpf),
+      p_crianca_nome: c.nome.trim(),
+      p_data_nascimento: c.data_nascimento,
+    });
+    if (dupError) {
+      toast.error("Erro ao verificar duplicidade: " + dupError.message);
+      setSubmitting(false);
+      return;
+    }
+    if ((dupCheck as { duplicada?: boolean })?.duplicada) {
+      const info = dupCheck as { protocolo?: string; status?: string };
+      toast.error(
+        `Esta criança já foi inscrita. Protocolo: ${info.protocolo ?? "—"} (Status: ${info.status ?? "—"})`,
+      );
+      setSubmitting(false);
+      return;
+    }
+
+    const payload = {
+      ...data,
+      responsavel: { ...data.responsavel, cpf: stripNonDigits(data.responsavel.cpf) },
+      crianca: { ...c, idade: String(idade ?? 0) },
+    };
     const { data: res, error } = await supabase.rpc("criar_inscricao", { payload });
     setSubmitting(false);
     if (error) {
-      toast.error("Erro ao enviar: " + error.message);
+      toast.error(error.message);
       return;
     }
     const protocolo = (res as CriarInscricaoResult | null)?.protocolo ?? "";
     localStorage.removeItem(STORAGE_KEY);
     navigate({ to: "/inscricao/sucesso", search: { protocolo } });
-  }
-
-  function calcIdade(dn: string) {
-    if (!dn) return "";
-    const d = new Date(dn);
-    const diff = Date.now() - d.getTime();
-    return Math.floor(diff / (365.25 * 24 * 3600 * 1000));
   }
 
   return (
@@ -217,17 +279,39 @@ function InscricaoPage() {
             defaultValue=""
           />
           {step === 0 && (
-            <StepResponsavel data={data.responsavel} onChange={(p) => update("responsavel", p)} />
+            <StepResponsavel
+              data={data.responsavel}
+              onChange={(p) => update("responsavel", p)}
+              errors={errors}
+              onClearError={clearError}
+              onAddError={addError}
+            />
           )}
-          {step === 1 && <StepCrianca data={data.crianca} onChange={(p) => update("crianca", p)} />}
+          {step === 1 && (
+            <StepCrianca
+              data={data.crianca}
+              onChange={(p) => update("crianca", p)}
+              errors={errors}
+              onClearError={clearError}
+              onAddError={addError}
+            />
+          )}
           {step === 2 && <StepSaude data={data.saude} onChange={(p) => update("saude", p)} />}
           {step === 3 && (
-            <StepEmergencia data={data.emergencia} onChange={(p) => update("emergencia", p)} />
+            <StepEmergencia
+              data={data.emergencia}
+              onChange={(p) => update("emergencia", p)}
+              errors={errors}
+              onClearError={clearError}
+              onAddError={addError}
+            />
           )}
           {step === 4 && (
             <StepAutorizacoes
               data={data.autorizacoes}
               onChange={(p) => update("autorizacoes", p)}
+              errors={errors}
+              onClearError={clearError}
             />
           )}
           {step === 5 && (
@@ -283,10 +367,12 @@ function Field({
   label,
   children,
   required,
+  error,
 }: {
   label: string;
   children: React.ReactNode;
   required?: boolean;
+  error?: string | null;
 }) {
   return (
     <div className="space-y-1.5">
@@ -294,6 +380,7 @@ function Field({
         {label} {required && <span className="text-destructive">*</span>}
       </Label>
       {children}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
@@ -302,26 +389,72 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="font-display font-bold text-2xl mb-4 gold-text">{children}</h2>;
 }
 
-function StepResponsavel({ data, onChange }: StepProps<"responsavel">) {
+function StepResponsavel({
+  data,
+  onChange,
+  errors,
+  onClearError,
+  onAddError,
+}: StepProps<"responsavel"> & {
+  errors: Errors;
+  onClearError: (f: string) => void;
+  onAddError: (f: string, m: string) => void;
+}) {
   return (
     <div>
       <SectionTitle>Dados do Responsável</SectionTitle>
       <div className="grid md:grid-cols-2 gap-4">
-        <Field label="Nome completo" required>
-          <Input value={data.nome} onChange={(e) => onChange({ nome: e.target.value })} />
-        </Field>
-        <Field label="CPF" required>
+        <Field label="Nome completo" required error={errors["resp_nome"]}>
           <Input
-            value={data.cpf}
-            onChange={(e) => onChange({ cpf: e.target.value })}
-            placeholder="000.000.000-00"
+            value={data.nome}
+            onChange={(e) => {
+              onChange({ nome: e.target.value });
+              onClearError("resp_nome");
+            }}
           />
         </Field>
-        <Field label="Telefone" required>
-          <Input value={data.telefone} onChange={(e) => onChange({ telefone: e.target.value })} />
+        <Field label="CPF" required error={errors["resp_cpf"]}>
+          <Input
+            value={data.cpf}
+            onChange={(e) => {
+              const v = formatCPF(e.target.value);
+              onChange({ cpf: v });
+              if (v && isValidCPF(v)) onClearError("resp_cpf");
+            }}
+            onBlur={() => {
+              if (data.cpf && !isValidCPF(data.cpf))
+                onAddError("resp_cpf", MSG.cpfInvalido);
+            }}
+            placeholder="000.000.000-00"
+            maxLength={14}
+          />
+        </Field>
+        <Field label="Telefone" required error={errors["resp_telefone"]}>
+          <Input
+            value={data.telefone}
+            onChange={(e) => {
+              const v = formatPhone(e.target.value);
+              onChange({ telefone: v });
+              if (v && isValidPhone(v)) onClearError("resp_telefone");
+            }}
+            onBlur={() => {
+              if (data.telefone && !isValidPhone(data.telefone))
+                onAddError("resp_telefone", MSG.telefoneInvalido);
+            }}
+            placeholder="(00) 00000-0000"
+            maxLength={16}
+          />
         </Field>
         <Field label="WhatsApp">
-          <Input value={data.whatsapp} onChange={(e) => onChange({ whatsapp: e.target.value })} />
+          <Input
+            value={data.whatsapp}
+            onChange={(e) => {
+              const v = formatPhone(e.target.value);
+              onChange({ whatsapp: v });
+            }}
+            placeholder="(00) 00000-0000"
+            maxLength={16}
+          />
         </Field>
         <Field label="E-mail">
           <Input
@@ -356,7 +489,17 @@ function StepResponsavel({ data, onChange }: StepProps<"responsavel">) {
   );
 }
 
-function StepCrianca({ data, onChange }: StepProps<"crianca">) {
+function StepCrianca({
+  data,
+  onChange,
+  errors,
+  onClearError,
+  onAddError,
+}: StepProps<"crianca"> & {
+  errors: Errors;
+  onClearError: (f: string) => void;
+  onAddError: (f: string, m: string) => void;
+}) {
   return (
     <div>
       <SectionTitle>Dados da Criança</SectionTitle>
@@ -364,31 +507,46 @@ function StepCrianca({ data, onChange }: StepProps<"crianca">) {
         Cada criança deve ter sua própria inscrição. Repita o processo para irmãos.
       </p>
       <div className="grid md:grid-cols-2 gap-4">
-        <Field label="Nome completo" required>
-          <Input value={data.nome} onChange={(e) => onChange({ nome: e.target.value })} />
+        <Field label="Nome completo" required error={errors["crianca_nome"]}>
+          <Input
+            value={data.nome}
+            onChange={(e) => {
+              onChange({ nome: e.target.value });
+              onClearError("crianca_nome");
+            }}
+          />
         </Field>
-        <Field label="Data de nascimento" required>
+        <Field label="Data de nascimento" required error={errors["crianca_data_nascimento"]}>
           <Input
             type="date"
             value={data.data_nascimento}
+            min={getMinDate()}
+            max={getMaxDate()}
             onChange={(e) => {
               const dn = e.target.value;
-              const idade = dn
-                ? String(
-                    Math.floor((Date.now() - new Date(dn).getTime()) / (365.25 * 24 * 3600 * 1000)),
-                  )
-                : "";
-              onChange({ data_nascimento: dn, idade });
+              const idade = calcIdade(dn);
+              onChange({ data_nascimento: dn, idade: idade !== null ? String(idade) : "" });
+              onClearError("crianca_data_nascimento");
             }}
           />
         </Field>
         <Field label="Idade">
-          <Input value={data.idade} onChange={(e) => onChange({ idade: e.target.value })} />
+          <Input
+            value={data.idade}
+            disabled
+            className="text-muted-foreground"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Calculada automaticamente. A EBF é para crianças de 0 a 12 anos.
+          </p>
         </Field>
-        <Field label="Sexo" required>
+        <Field label="Sexo" required error={errors["crianca_sexo"]}>
           <RadioGroup
             value={data.sexo}
-            onValueChange={(v) => onChange({ sexo: v })}
+            onValueChange={(v) => {
+              onChange({ sexo: v });
+              onClearError("crianca_sexo");
+            }}
             className="flex gap-4 pt-1"
           >
             <label className="flex items-center gap-2 cursor-pointer">
@@ -451,16 +609,45 @@ function StepSaude({ data, onChange }: StepProps<"saude">) {
   );
 }
 
-function StepEmergencia({ data, onChange }: StepProps<"emergencia">) {
+function StepEmergencia({
+  data,
+  onChange,
+  errors,
+  onClearError,
+  onAddError,
+}: StepProps<"emergencia"> & {
+  errors: Errors;
+  onClearError: (f: string) => void;
+  onAddError: (f: string, m: string) => void;
+}) {
   return (
     <div>
       <SectionTitle>Contato de Emergência</SectionTitle>
       <div className="grid md:grid-cols-2 gap-4">
-        <Field label="Nome do contato" required>
-          <Input value={data.nome} onChange={(e) => onChange({ nome: e.target.value })} />
+        <Field label="Nome do contato" required error={errors["emergencia_nome"]}>
+          <Input
+            value={data.nome}
+            onChange={(e) => {
+              onChange({ nome: e.target.value });
+              onClearError("emergencia_nome");
+            }}
+          />
         </Field>
-        <Field label="Telefone" required>
-          <Input value={data.telefone} onChange={(e) => onChange({ telefone: e.target.value })} />
+        <Field label="Telefone" required error={errors["emergencia_telefone"]}>
+          <Input
+            value={data.telefone}
+            onChange={(e) => {
+              const v = formatPhone(e.target.value);
+              onChange({ telefone: v });
+              if (v && isValidPhone(v)) onClearError("emergencia_telefone");
+            }}
+            onBlur={() => {
+              if (data.telefone && !isValidPhone(data.telefone))
+                onAddError("emergencia_telefone", MSG.telefoneInvalido);
+            }}
+            placeholder="(00) 00000-0000"
+            maxLength={16}
+          />
         </Field>
         <Field label="Grau de parentesco">
           <Input
@@ -473,18 +660,31 @@ function StepEmergencia({ data, onChange }: StepProps<"emergencia">) {
   );
 }
 
-function StepAutorizacoes({ data, onChange }: StepProps<"autorizacoes">) {
+function StepAutorizacoes({
+  data,
+  onChange,
+  errors,
+  onClearError,
+}: {
+  data: FormData["autorizacoes"];
+  onChange: (patch: Partial<FormData["autorizacoes"]>) => void;
+  errors: Errors;
+  onClearError: (f: string) => void;
+}) {
   const items = [
     {
-      key: "participacao",
+      key: "participacao" as const,
       label: "Autorizo a participação da criança em todas as atividades da EBF 2026.",
     },
-    { key: "imagem", label: "Autorizo o uso de imagem da criança nas mídias oficiais da igreja." },
-    { key: "veracidade", label: "Confirmo que todas as informações prestadas são verdadeiras." },
-  ] as const;
+    { key: "imagem" as const, label: "Autorizo o uso de imagem da criança nas mídias oficiais da igreja." },
+    { key: "veracidade" as const, label: "Confirmo que todas as informações prestadas são verdadeiras." },
+  ];
   return (
     <div>
       <SectionTitle>Autorizações</SectionTitle>
+      {errors["autorizacoes"] && (
+        <p className="text-sm text-destructive mb-3">{errors["autorizacoes"]}</p>
+      )}
       <div className="space-y-3">
         {items.map(({ key, label }) => (
           <label
@@ -493,7 +693,10 @@ function StepAutorizacoes({ data, onChange }: StepProps<"autorizacoes">) {
           >
             <Checkbox
               checked={data[key]}
-              onCheckedChange={(v) => onChange({ [key]: !!v })}
+              onCheckedChange={(v) => {
+                onChange({ [key]: !!v });
+                onClearError("autorizacoes");
+              }}
               className="mt-0.5"
             />
             <span className="text-sm">{label}</span>
@@ -527,6 +730,7 @@ function StepConfirmacao({ data }: { data: FormData }) {
           <h3 className="font-display font-bold mb-2">Criança</h3>
           {row("Nome", data.crianca.nome)}
           {row("Nascimento", data.crianca.data_nascimento)}
+          {row("Idade", data.crianca.idade ? `${data.crianca.idade} anos` : "")}
           {row("Sexo", data.crianca.sexo)}
           {row("Camisa", data.crianca.tamanho_camisa)}
         </div>
