@@ -9,11 +9,16 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:pg": "pg_prove -d \"$SUPABASE_DB_URL\" supabase/tests/*.pg.sql",
     "lint": "eslint .",
     "format": "prettier --write .",
     "admin:seed": "node --env-file=.env scripts/seed-default-admin.mjs",
     "homolog:check": "node --env-file=.env scripts/homologation-check.mjs",
-    "homolog:public-flow": "node --env-file=.env scripts/homologation-public-flow.mjs"
+    "homolog:public-flow": "node --env-file=.env scripts/homologation-public-flow.mjs",
+    "deploy:safety-check": "node scripts/deploy-safety-check.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
@@ -47,6 +52,9 @@
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "2.3.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -57,10 +65,12 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
+    "jsdom": "^29.1.1",
     "nitro": "3.0.260603-beta",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.1.8"
   }
 }

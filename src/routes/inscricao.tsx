@@ -120,8 +120,7 @@ function InscricaoPage() {
       return next;
     });
 
-  const addError = (field: string, msg: string) =>
-    setErrors((e) => ({ ...e, [field]: msg }));
+  const addError = (field: string, msg: string) => setErrors((e) => ({ ...e, [field]: msg }));
 
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const prev = () => setStep((s) => Math.max(s - 1, 0));
@@ -141,7 +140,8 @@ function InscricaoPage() {
     if (step === 1) {
       const c = data.crianca;
       if (!c.nome) newErrors["crianca_nome"] = MSG.campoObrigatorio("Nome da criança");
-      if (!c.data_nascimento) newErrors["crianca_data_nascimento"] = MSG.campoObrigatorio("Data de nascimento");
+      if (!c.data_nascimento)
+        newErrors["crianca_data_nascimento"] = MSG.campoObrigatorio("Data de nascimento");
       else {
         const idade = calcIdade(c.data_nascimento);
         if (idade === null) newErrors["crianca_data_nascimento"] = "Data de nascimento inválida.";
@@ -159,8 +159,7 @@ function InscricaoPage() {
 
     if (step === 4) {
       const a = data.autorizacoes;
-      if (!a.participacao || !a.veracidade)
-        newErrors["autorizacoes"] = MSG.autorizacaoObrigatoria;
+      if (!a.participacao || !a.veracidade) newErrors["autorizacoes"] = MSG.autorizacaoObrigatoria;
     }
 
     setErrors(newErrors);
@@ -184,50 +183,63 @@ function InscricaoPage() {
         return;
       }
       setSubmitting(true);
-      const result = await verifyTurnstile({ data: { token: turnstileToken } });
-      if (!result.success) {
-        toast.error(result.error || MSG.seguranca);
-        setSubmitting(false);
+      try {
+        const result = await verifyTurnstile({ data: { token: turnstileToken } });
+        if (!result.success) {
+          toast.error(result.error || MSG.seguranca);
+          return;
+        }
+      } catch (e) {
+        toast.error(MSG.seguranca);
         return;
+      } finally {
+        setSubmitting(false);
       }
     }
+
     setSubmitting(true);
-    const c = data.crianca;
-    const idade = calcIdade(c.data_nascimento);
+    try {
+      const c = data.crianca;
+      const idade = calcIdade(c.data_nascimento);
 
-    const { data: dupCheck, error: dupError } = await supabase.rpc("verificar_inscricao_duplicada", {
-      p_responsavel_cpf: stripNonDigits(data.responsavel.cpf),
-      p_crianca_nome: c.nome.trim(),
-      p_data_nascimento: c.data_nascimento,
-    });
-    if (dupError) {
-      toast.error("Erro ao verificar duplicidade: " + dupError.message);
-      setSubmitting(false);
-      return;
-    }
-    if ((dupCheck as { duplicada?: boolean })?.duplicada) {
-      const info = dupCheck as { protocolo?: string; status?: string };
-      toast.error(
-        `Esta criança já foi inscrita. Protocolo: ${info.protocolo ?? "—"} (Status: ${info.status ?? "—"})`,
+      const { data: dupCheck, error: dupError } = await supabase.rpc(
+        "verificar_inscricao_duplicada",
+        {
+          p_responsavel_cpf: stripNonDigits(data.responsavel.cpf),
+          p_crianca_nome: c.nome.trim(),
+          p_data_nascimento: c.data_nascimento,
+        },
       );
-      setSubmitting(false);
-      return;
-    }
+      if (dupError) {
+        toast.error("Erro ao verificar duplicidade: " + dupError.message);
+        return;
+      }
+      if ((dupCheck as { duplicada?: boolean })?.duplicada) {
+        const info = dupCheck as { protocolo?: string; status?: string };
+        toast.error(
+          `Esta criança já foi inscrita. Protocolo: ${info.protocolo ?? "—"} (Status: ${info.status ?? "—"})`,
+        );
+        return;
+      }
 
-    const payload = {
-      ...data,
-      responsavel: { ...data.responsavel, cpf: stripNonDigits(data.responsavel.cpf) },
-      crianca: { ...c, idade: String(idade ?? 0) },
-    };
-    const { data: res, error } = await supabase.rpc("criar_inscricao", { payload });
-    setSubmitting(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+      const payload = {
+        ...data,
+        responsavel: { ...data.responsavel, cpf: stripNonDigits(data.responsavel.cpf) },
+        crianca: { ...c, idade: String(idade ?? 0) },
+      };
+      const { data: res, error } = await supabase.rpc("criar_inscricao", { payload });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      const protocolo = (res as CriarInscricaoResult | null)?.protocolo ?? "";
+      localStorage.removeItem(STORAGE_KEY);
+      navigate({ to: "/inscricao/sucesso", search: { protocolo } });
+    } catch (e) {
+      toast.error("Erro inesperado ao enviar inscrição. Tente novamente.");
+    } finally {
+      setSubmitting(false);
     }
-    const protocolo = (res as CriarInscricaoResult | null)?.protocolo ?? "";
-    localStorage.removeItem(STORAGE_KEY);
-    navigate({ to: "/inscricao/sucesso", search: { protocolo } });
   }
 
   return (
@@ -261,13 +273,22 @@ function InscricaoPage() {
           </div>
         </div>
 
-        <div className="glass-card rounded-3xl p-6 md:p-8">
+        <div
+          className="glass-card rounded-3xl p-6 md:p-8"
+          aria-label={`Etapa ${step + 1} de ${STEPS.length}: ${STEPS[step]}`}
+        >
+          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {Object.keys(errors).length > 0
+              ? `${Object.keys(errors).length} erro(s) no formulário.`
+              : ""}
+          </div>
           <input
             ref={honeypotRef}
             type="text"
             name="website"
             tabIndex={-1}
             autoComplete="off"
+            aria-hidden="true"
             style={{
               position: "absolute",
               left: "-9999px",
@@ -368,19 +389,29 @@ function Field({
   children,
   required,
   error,
+  id,
 }: {
   label: string;
   children: React.ReactNode;
   required?: boolean;
   error?: string | null;
+  id?: string;
 }) {
+  const errorId = id ? `${id}-error` : undefined;
   return (
-    <div className="space-y-1.5">
-      <Label className="text-sm font-semibold">
-        {label} {required && <span className="text-destructive">*</span>}
+    <div className="space-y-1.5" role="group" aria-labelledby={id ? `${id}-label` : undefined}>
+      <Label id={id ? `${id}-label` : undefined} className="text-sm font-semibold">
+        {label}{" "}
+        {required && (
+          <span className="text-destructive" aria-hidden="true">
+            *
+          </span>
+        )}
       </Label>
       {children}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div id={errorId} role="alert" aria-live="polite" aria-atomic="true">
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
     </div>
   );
 }
@@ -406,6 +437,7 @@ function StepResponsavel({
       <div className="grid md:grid-cols-2 gap-4">
         <Field label="Nome completo" required error={errors["resp_nome"]}>
           <Input
+            aria-required="true"
             value={data.nome}
             onChange={(e) => {
               onChange({ nome: e.target.value });
@@ -415,6 +447,7 @@ function StepResponsavel({
         </Field>
         <Field label="CPF" required error={errors["resp_cpf"]}>
           <Input
+            aria-required="true"
             value={data.cpf}
             onChange={(e) => {
               const v = formatCPF(e.target.value);
@@ -422,8 +455,7 @@ function StepResponsavel({
               if (v && isValidCPF(v)) onClearError("resp_cpf");
             }}
             onBlur={() => {
-              if (data.cpf && !isValidCPF(data.cpf))
-                onAddError("resp_cpf", MSG.cpfInvalido);
+              if (data.cpf && !isValidCPF(data.cpf)) onAddError("resp_cpf", MSG.cpfInvalido);
             }}
             placeholder="000.000.000-00"
             maxLength={14}
@@ -431,6 +463,7 @@ function StepResponsavel({
         </Field>
         <Field label="Telefone" required error={errors["resp_telefone"]}>
           <Input
+            aria-required="true"
             value={data.telefone}
             onChange={(e) => {
               const v = formatPhone(e.target.value);
@@ -509,6 +542,7 @@ function StepCrianca({
       <div className="grid md:grid-cols-2 gap-4">
         <Field label="Nome completo" required error={errors["crianca_nome"]}>
           <Input
+            aria-required="true"
             value={data.nome}
             onChange={(e) => {
               onChange({ nome: e.target.value });
@@ -519,6 +553,7 @@ function StepCrianca({
         <Field label="Data de nascimento" required error={errors["crianca_data_nascimento"]}>
           <Input
             type="date"
+            aria-required="true"
             value={data.data_nascimento}
             min={getMinDate()}
             max={getMaxDate()}
@@ -531,11 +566,7 @@ function StepCrianca({
           />
         </Field>
         <Field label="Idade">
-          <Input
-            value={data.idade}
-            disabled
-            className="text-muted-foreground"
-          />
+          <Input value={data.idade} disabled className="text-muted-foreground" />
           <p className="text-xs text-muted-foreground mt-1">
             Calculada automaticamente. A EBF é para crianças de 0 a 12 anos.
           </p>
@@ -626,6 +657,7 @@ function StepEmergencia({
       <div className="grid md:grid-cols-2 gap-4">
         <Field label="Nome do contato" required error={errors["emergencia_nome"]}>
           <Input
+            aria-required="true"
             value={data.nome}
             onChange={(e) => {
               onChange({ nome: e.target.value });
@@ -635,6 +667,7 @@ function StepEmergencia({
         </Field>
         <Field label="Telefone" required error={errors["emergencia_telefone"]}>
           <Input
+            aria-required="true"
             value={data.telefone}
             onChange={(e) => {
               const v = formatPhone(e.target.value);
@@ -676,8 +709,14 @@ function StepAutorizacoes({
       key: "participacao" as const,
       label: "Autorizo a participação da criança em todas as atividades da EBF 2026.",
     },
-    { key: "imagem" as const, label: "Autorizo o uso de imagem da criança nas mídias oficiais da igreja." },
-    { key: "veracidade" as const, label: "Confirmo que todas as informações prestadas são verdadeiras." },
+    {
+      key: "imagem" as const,
+      label: "Autorizo o uso de imagem da criança nas mídias oficiais da igreja.",
+    },
+    {
+      key: "veracidade" as const,
+      label: "Confirmo que todas as informações prestadas são verdadeiras.",
+    },
   ];
   return (
     <div>
@@ -708,42 +747,80 @@ function StepAutorizacoes({
 }
 
 function StepConfirmacao({ data }: { data: FormData }) {
-  const row = (k: string, v?: string) =>
-    v ? (
-      <div className="flex justify-between gap-4 py-1 text-sm border-b border-[color:var(--gold)]/10 last:border-0">
-        <span className="text-muted-foreground">{k}</span>
-        <span className="font-medium text-right">{v}</span>
-      </div>
-    ) : null;
+  const row = (k: string, v?: string) => (
+    <div className="flex justify-between gap-4 py-1.5 text-sm border-b border-[color:var(--gold)]/10 last:border-0">
+      <span className="text-muted-foreground shrink-0">{k}</span>
+      <span className={`font-medium text-right ${v ? "" : "italic text-muted-foreground/60"}`}>
+        {v || "—"}
+      </span>
+    </div>
+  );
   return (
     <div>
       <SectionTitle>Confirme os dados</SectionTitle>
+      <p className="text-sm text-muted-foreground mb-4">
+        Revise todas as informações antes de finalizar. Você pode voltar para corrigir.
+      </p>
       <div className="grid md:grid-cols-2 gap-6">
-        <div>
-          <h3 className="font-display font-bold mb-2">Responsável</h3>
+        <div className="glass-card rounded-2xl p-4 space-y-0.5">
+          <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
+            Responsável
+          </h3>
           {row("Nome", data.responsavel.nome)}
           {row("CPF", data.responsavel.cpf)}
           {row("Telefone", data.responsavel.telefone)}
+          {row("WhatsApp", data.responsavel.whatsapp)}
+          {row("E-mail", data.responsavel.email)}
           {row("Igreja", data.responsavel.igreja)}
+          {row("Endereço", data.responsavel.endereco)}
+          {row("Bairro", data.responsavel.bairro)}
+          {row("Cidade", data.responsavel.cidade)}
+          {row("Estado", data.responsavel.estado)}
+          {row("Nome do Pai", data.responsavel.nome_pai)}
+          {row("Nome da Mãe", data.responsavel.nome_mae)}
         </div>
-        <div>
-          <h3 className="font-display font-bold mb-2">Criança</h3>
+        <div className="glass-card rounded-2xl p-4 space-y-0.5">
+          <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
+            Criança
+          </h3>
           {row("Nome", data.crianca.nome)}
           {row("Nascimento", data.crianca.data_nascimento)}
           {row("Idade", data.crianca.idade ? `${data.crianca.idade} anos` : "")}
-          {row("Sexo", data.crianca.sexo)}
+          {row(
+            "Sexo",
+            data.crianca.sexo === "masculino"
+              ? "Masculino"
+              : data.crianca.sexo === "feminino"
+                ? "Feminino"
+                : data.crianca.sexo,
+          )}
+          {row("Série", data.crianca.serie_escolar)}
           {row("Camisa", data.crianca.tamanho_camisa)}
         </div>
-        <div>
-          <h3 className="font-display font-bold mb-2">Saúde</h3>
+        <div className="glass-card rounded-2xl p-4 space-y-0.5">
+          <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
+            Saúde
+          </h3>
           {row("Alergias", data.saude.alergias)}
           {row("Medicamentos", data.saude.medicamentos)}
+          {row("Necessidades especiais", data.saude.necessidades_especiais)}
+          {row("Restrições alimentares", data.saude.restricoes_alimentares)}
         </div>
-        <div>
-          <h3 className="font-display font-bold mb-2">Emergência</h3>
+        <div className="glass-card rounded-2xl p-4 space-y-0.5">
+          <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
+            Emergência
+          </h3>
           {row("Nome", data.emergencia.nome)}
           {row("Telefone", data.emergencia.telefone)}
           {row("Parentesco", data.emergencia.parentesco)}
+          <div className="pt-3 mt-3 border-t border-[color:var(--gold)]/20">
+            <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
+              Autorizações
+            </h3>
+            {row("Participação", data.autorizacoes.participacao ? "✓ Autorizado" : "—")}
+            {row("Uso de imagem", data.autorizacoes.imagem ? "✓ Autorizado" : "—")}
+            {row("Veracidade", data.autorizacoes.veracidade ? "✓ Confirmado" : "—")}
+          </div>
         </div>
       </div>
     </div>

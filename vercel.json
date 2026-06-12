@@ -3,5 +3,15 @@
   "outputDirectory": ".vercel/output",
   "installCommand": "npm install",
   "framework": "tanstack-start",
-  "devCommand": "npm run dev"
+  "devCommand": "npm run dev",
+  "env": {
+    "SUPABASE_PROJECT_ID": "@supabase-project-id",
+    "SUPABASE_URL": "@supabase-url",
+    "SUPABASE_PUBLISHABLE_KEY": "@supabase-publishable-key",
+    "VITE_SUPABASE_PROJECT_ID": "@supabase-project-id",
+    "VITE_SUPABASE_URL": "@supabase-url",
+    "VITE_SUPABASE_PUBLISHABLE_KEY": "@supabase-publishable-key",
+    "TURNSTILE_SECRET_KEY": "@turnstile-secret-key",
+    "VITE_TURNSTILE_SITE_KEY": "@turnstile-site-key"
+  }
 }

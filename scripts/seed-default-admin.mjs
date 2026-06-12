@@ -9,9 +9,14 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-const ADMIN_EMAIL = "admin@ebf2026.local";
-const ADMIN_PASSWORD = "EBF-admin2026";
-const ADMIN_DISPLAY_NAME = "EBF-admin2026";
+if (!ADMIN_PASSWORD) {
+  console.error("Missing ADMIN_PASSWORD. Set it in .env or environment.");
+  process.exit(1);
+}
+
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@ebf2026.local";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_DISPLAY_NAME = process.env.ADMIN_DISPLAY_NAME || "EBF-admin2026";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

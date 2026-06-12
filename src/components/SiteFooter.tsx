@@ -1,12 +1,28 @@
 import { LogoUCADMA, LogoAD } from "./Brand";
 import { Instagram, Facebook, MapPin, Phone } from "lucide-react";
 
+const SOCIAL_LINKS = [
+  {
+    href: "https://www.instagram.com/ucadma_marupauba/",
+    label: "Instagram UCADMA Marupaúba",
+    icon: Instagram,
+  },
+  {
+    href: "https://www.facebook.com/ucadma.marupauba",
+    label: "Facebook UCADMA Marupaúba",
+    icon: Facebook,
+  },
+] as const;
+
 export function SiteFooter() {
   return (
-    <footer className="mt-24 border-t border-[color:var(--gold)]/25 bg-[image:var(--gradient-royal)] text-white">
+    <footer
+      className="mt-24 border-t border-[color:var(--gold)]/25 bg-[image:var(--gradient-royal)] text-white"
+      role="contentinfo"
+    >
       <div className="container mx-auto px-4 py-12 grid gap-10 md:grid-cols-4">
         <div className="md:col-span-2 flex gap-4 items-start">
-          <LogoAD className="h-20 w-20" />
+          <LogoAD className="h-20 w-20" aria-hidden="true" />
           <div>
             <div className="font-display font-bold text-2xl">Assembleia de Deus</div>
             <div className="text-white/80">Campo Marupaúba · Tomé-Açu · Pará</div>
@@ -20,31 +36,34 @@ export function SiteFooter() {
           <h4 className="font-display font-semibold mb-3 text-[color:var(--gold)]">Contato</h4>
           <ul className="space-y-2 text-sm text-white/80">
             <li className="flex gap-2">
-              <MapPin className="h-4 w-4 mt-0.5 shrink-0" /> Campo Marupaúba, Tomé-Açu — PA
+              <MapPin className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+              <span>Campo Marupaúba, Tomé-Açu — PA</span>
             </li>
             <li className="flex gap-2">
-              <Phone className="h-4 w-4 mt-0.5 shrink-0" /> Secretaria UCADMA
+              <Phone className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+              <span>Secretaria UCADMA</span>
             </li>
           </ul>
         </div>
         <div>
           <h4 className="font-display font-semibold mb-3 text-[color:var(--gold)]">Redes</h4>
-          <div className="flex gap-3">
-            <a
-              href="#"
-              className="p-2 rounded-full bg-white/10 hover:bg-[color:var(--gold)]/30 transition"
-            >
-              <Instagram className="h-5 w-5" />
-            </a>
-            <a
-              href="#"
-              className="p-2 rounded-full bg-white/10 hover:bg-[color:var(--gold)]/30 transition"
-            >
-              <Facebook className="h-5 w-5" />
-            </a>
+          <div className="flex gap-3" role="list" aria-label="Redes sociais">
+            {SOCIAL_LINKS.map(({ href, label, icon: Icon }) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 rounded-full bg-white/10 hover:bg-[color:var(--gold)]/30 transition focus-visible:outline-2 focus-visible:outline-[color:var(--gold)]"
+                aria-label={label}
+                role="listitem"
+              >
+                <Icon className="h-5 w-5" aria-hidden="true" />
+              </a>
+            ))}
           </div>
           <div className="mt-6 flex items-center gap-3">
-            <LogoUCADMA className="h-12 w-12 bg-white/10 rounded-full p-1" />
+            <LogoUCADMA className="h-12 w-12 bg-white/10 rounded-full p-1" aria-hidden="true" />
             <div className="text-xs text-white/70">
               União de Crianças
               <br />

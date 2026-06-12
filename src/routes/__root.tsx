@@ -76,15 +76,23 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { title: "EBF 2026 · UCADMA Marupaúba" },
+      {
+        name: "description",
+        content:
+          "Inscrição para a Escola Bíblica de Férias 2026 — UCADMA, Assembleia de Deus Campo Marupaúba, Tomé-Açu, Pará.",
+      },
+      { name: "author", content: "UCADMA Marupaúba" },
+      { property: "og:title", content: "EBF 2026 · UCADMA Marupaúba" },
+      {
+        property: "og:description",
+        content: "Inscreva sua criança na EBF 2026 — Cristo, o Ungido de Deus. Lucas 4:18-19.",
+      },
       { property: "og:type", content: "website" },
+      { property: "og:locale", content: "pt_BR" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "theme-color", content: "#1a1a2e" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -107,7 +115,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="pt-BR">
       <head>
         <HeadContent />
       </head>

@@ -1,1 +1,13 @@
-project_id = "oyedphzaxagvnbhbpdru"
+project_id = "fwaiaxfbyuvjqelvuivz"
+
+[auth]
+# Enable email password sign-in
+enabled = true
+
+[auth.email]
+enable_confirmations = false
+enable_autoconfirm = true
+
+[api]
+# Port the API server listens on
+port = 54321

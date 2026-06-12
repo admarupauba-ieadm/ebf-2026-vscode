@@ -325,6 +325,14 @@ export type Database = {
         Args: { p_inscricao_id: string };
         Returns: Json;
       };
+      admin_update_status: {
+        Args: { p_inscricao_id: string; p_novo_status: string };
+        Returns: Json;
+      };
+      admin_register_presence: {
+        Args: { p_crianca_id: string; p_data: string; p_status: string; p_registrado_por?: string };
+        Returns: Json;
+      };
     };
     Enums: {
       app_role: "admin" | "equipe";

@@ -3,11 +3,16 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
-const ADMIN_EMAIL = "admin@ebf2026.local";
-const ADMIN_PASSWORD = "EBF-admin2026";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@ebf2026.local";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY.");
+  process.exit(1);
+}
+
+if (!ADMIN_PASSWORD) {
+  console.error("Missing ADMIN_PASSWORD. Set it in .env or environment.");
   process.exit(1);
 }
 
