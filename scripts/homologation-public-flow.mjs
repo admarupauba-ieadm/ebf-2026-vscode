@@ -59,16 +59,12 @@ async function run() {
       cidade: "Tomé-Açu",
       estado: "PA",
       igreja: "AD Campo Marupaúba",
-      nome_pai: "Pai Homologacao",
-      nome_mae: "Mae Homologacao",
     },
     crianca: {
       nome: childName,
       data_nascimento: birthDate,
       idade: String(age),
       sexo: "feminino",
-      serie_escolar: "2º ano",
-      tamanho_camisa: "M",
     },
     saude: {
       alergias: "Nenhuma",

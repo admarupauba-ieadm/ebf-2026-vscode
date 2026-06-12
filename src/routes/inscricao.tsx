@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -68,16 +68,12 @@ const EMPTY: FormData = {
     cidade: "Tomé-Açu",
     estado: "PA",
     igreja: "AD Campo Marupaúba",
-    nome_pai: "",
-    nome_mae: "",
   },
   crianca: {
     nome: "",
     data_nascimento: "",
     idade: "",
     sexo: "",
-    serie_escolar: "",
-    tamanho_camisa: "",
   },
   saude: { alergias: "", medicamentos: "", necessidades_especiais: "", restricoes_alimentares: "" },
   emergencia: { nome: "", telefone: "", parentesco: "" },
@@ -88,11 +84,12 @@ const STORAGE_KEY = "ebf2026-form-draft";
 const STEPS = ["Responsável", "Criança", "Saúde", "Emergência", "Autorizações", "Confirmação"];
 
 function InscricaoPage() {
-  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [data, setData] = useState<FormData>(EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [protocoloResult, setProtocoloResult] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
   const startTimeRef = useRef(Date.now());
   const honeypotRef = useRef<HTMLInputElement>(null);
@@ -168,6 +165,7 @@ function InscricaoPage() {
   }
 
   async function submit() {
+    if (submitted) return;
     if (Date.now() - startTimeRef.current < 5000) {
       toast.error(MSG.rapido);
       return;
@@ -234,7 +232,9 @@ function InscricaoPage() {
       }
       const protocolo = (res as CriarInscricaoResult | null)?.protocolo ?? "";
       localStorage.removeItem(STORAGE_KEY);
-      navigate({ to: "/inscricao/sucesso", search: { protocolo } });
+      toast.success("✅ Inscrição enviada com sucesso!");
+      setProtocoloResult(protocolo);
+      setSubmitted(true);
     } catch (e) {
       toast.error("Erro inesperado ao enviar inscrição. Tente novamente.");
     } finally {
@@ -337,25 +337,35 @@ function InscricaoPage() {
           )}
           {step === 5 && (
             <>
-              <StepConfirmacao data={data} />
-              {import.meta.env.VITE_TURNSTILE_SITE_KEY && (
-                <div className="mt-6 pt-6 border-t border-[color:var(--gold)]/20">
-                  <p className="text-sm text-muted-foreground mb-3 text-center">
-                    Verificação de segurança
-                  </p>
-                  <TurnstileWidget
-                    siteKey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
-                    onToken={setTurnstileToken}
-                  />
-                </div>
+              {submitted ? (
+                <SuccessCard protocolo={protocoloResult} />
+              ) : (
+                <>
+                  <StepConfirmacao data={data} />
+                  {import.meta.env.VITE_TURNSTILE_SITE_KEY && (
+                    <div className="mt-6 pt-6 border-t border-[color:var(--gold)]/20">
+                      <p className="text-sm text-muted-foreground mb-3 text-center">
+                        Verificação de segurança
+                      </p>
+                      <TurnstileWidget
+                        siteKey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
+                        onToken={setTurnstileToken}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
 
           <div className="flex justify-between mt-8 pt-6 border-t border-[color:var(--gold)]/20">
-            <Button variant="outline" onClick={prev} disabled={step === 0}>
-              Voltar
-            </Button>
+            {submitted ? (
+              <div />
+            ) : (
+              <Button variant="outline" onClick={prev} disabled={step === 0}>
+                Voltar
+              </Button>
+            )}
             {step < STEPS.length - 1 ? (
               <Button
                 onClick={() => {
@@ -370,10 +380,14 @@ function InscricaoPage() {
             ) : (
               <Button
                 onClick={submit}
-                disabled={submitting}
-                className="bg-[image:var(--gradient-gold)] text-[color:var(--royal-deep)] font-bold border-0 shine-on-hover"
+                disabled={submitting || submitted}
+                className={`bg-[image:var(--gradient-gold)] text-[color:var(--royal-deep)] font-bold border-0 ${submitted ? "opacity-70 cursor-not-allowed" : "shine-on-hover"}`}
               >
-                {submitting ? "Enviando..." : "✨ Finalizar Inscrição"}
+                {submitted
+                  ? "✓ Inscrição Enviada"
+                  : submitting
+                    ? "Enviando..."
+                    : "✨ Finalizar Inscrição"}
               </Button>
             )}
           </div>
@@ -511,12 +525,6 @@ function StepResponsavel({
         <Field label="Estado">
           <Input value={data.estado} onChange={(e) => onChange({ estado: e.target.value })} />
         </Field>
-        <Field label="Nome do Pai">
-          <Input value={data.nome_pai} onChange={(e) => onChange({ nome_pai: e.target.value })} />
-        </Field>
-        <Field label="Nome da Mãe">
-          <Input value={data.nome_mae} onChange={(e) => onChange({ nome_mae: e.target.value })} />
-        </Field>
       </div>
     </div>
   );
@@ -587,19 +595,6 @@ function StepCrianca({
               <RadioGroupItem value="feminino" /> Feminino
             </label>
           </RadioGroup>
-        </Field>
-        <Field label="Série escolar">
-          <Input
-            value={data.serie_escolar}
-            onChange={(e) => onChange({ serie_escolar: e.target.value })}
-          />
-        </Field>
-        <Field label="Tamanho da camisa">
-          <Input
-            value={data.tamanho_camisa}
-            onChange={(e) => onChange({ tamanho_camisa: e.target.value })}
-            placeholder="PP / P / M / G / GG"
-          />
         </Field>
       </div>
     </div>
@@ -746,6 +741,50 @@ function StepAutorizacoes({
   );
 }
 
+function SuccessCard({ protocolo }: { protocolo: string }) {
+  return (
+    <div className="text-center animate-glow">
+      <div className="flex justify-center gap-4 mb-4">
+        <LogoUCADMA className="h-16 w-16" />
+        <LogoAD className="h-16 w-16" />
+      </div>
+      <p className="text-5xl mb-3" role="img" aria-label="Festa">
+        🎉
+      </p>
+      <h2 className="font-display font-bold text-3xl md:text-4xl gold-text mb-2">
+        Inscrição enviada com sucesso!
+      </h2>
+      <p className="text-sm text-muted-foreground mb-6">
+        Sua criança está oficialmente inscrita na EBF 2026.
+      </p>
+
+      <div className="bg-[image:var(--gradient-gold)] text-[color:var(--royal-deep)] rounded-2xl py-6 px-4 my-6 shadow-[var(--shadow-gold)]">
+        <div className="text-xs uppercase tracking-widest font-bold mb-1">Protocolo</div>
+        <div className="font-display font-bold text-3xl md:text-4xl tracking-wider">
+          {protocolo || "—"}
+        </div>
+      </div>
+
+      <p className="text-sm text-muted-foreground mb-2">
+        Guarde este número. Ele poderá ser utilizado posteriormente na página de consulta.
+      </p>
+      <p className="text-sm text-muted-foreground mb-6">
+        Você pode consultar esta inscrição posteriormente através da página{" "}
+        <strong>Consultar</strong>.
+      </p>
+
+      <div className="flex flex-wrap gap-3 justify-center">
+        <Button
+          asChild
+          className="bg-[image:var(--gradient-gold)] text-[color:var(--royal-deep)] font-bold border-0"
+        >
+          <Link to="/consulta">Ir para Consulta</Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function StepConfirmacao({ data }: { data: FormData }) {
   const row = (k: string, v?: string) => (
     <div className="flex justify-between gap-4 py-1.5 text-sm border-b border-[color:var(--gold)]/10 last:border-0">
@@ -776,8 +815,6 @@ function StepConfirmacao({ data }: { data: FormData }) {
           {row("Bairro", data.responsavel.bairro)}
           {row("Cidade", data.responsavel.cidade)}
           {row("Estado", data.responsavel.estado)}
-          {row("Nome do Pai", data.responsavel.nome_pai)}
-          {row("Nome da Mãe", data.responsavel.nome_mae)}
         </div>
         <div className="glass-card rounded-2xl p-4 space-y-0.5">
           <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">
@@ -794,8 +831,6 @@ function StepConfirmacao({ data }: { data: FormData }) {
                 ? "Feminino"
                 : data.crianca.sexo,
           )}
-          {row("Série", data.crianca.serie_escolar)}
-          {row("Camisa", data.crianca.tamanho_camisa)}
         </div>
         <div className="glass-card rounded-2xl p-4 space-y-0.5">
           <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">

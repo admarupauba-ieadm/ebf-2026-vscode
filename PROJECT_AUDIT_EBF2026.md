@@ -4,6 +4,7 @@
 **Auditoria de segurança:** 14/06/2026
 **Release readiness validation:** 15/06/2026
 **Release engineering — final sweep:** 16/06/2026
+**Última atualização:** 12/06/2026 (remoção de 4 campos do formulário + novo fluxo de sucesso inline + Sentry)
 **Projeto:** EBF Connect Hub — UCADMA Marupaúba
 **Auditor:** Cursor/Claude (análise completa do código-fonte, banco e infraestrutura)
 
@@ -70,7 +71,9 @@
 - [x] CAPTCHA Turnstile (server verification)
 - [x] Prevenção duplicatas (frontend + SQL UNIQUE)
 - [x] Anti-bot (timeout 5s + honeypot)
-- [x] Página de sucesso (`/inscricao/sucesso`)
+- [x] Sucesso inline com protocolo na própria página (não navega para `/inscricao/sucesso`)
+- [x] Bloqueio de múltiplos envios (botão desabilitado + estado `submitted`)
+- [x] Card de confirmação com protocolo e link "Ir para Consulta"
 - [x] Consulta pública (`/consulta`) — por protocolo, CPF ou telefone
 
 ### Área Administrativa
@@ -156,7 +159,7 @@
 | M5 | `savingStatusId` reusado para status e delete | dashboard | Loading incorreto | 🔄 Pendente |
 | M6 | Race conditions sem AbortController | dashboard | Concorrência em filtros | ✅ Corrigido |
 | M7 | CPF visível em texto completo no detalhes | dashboard | Dado sensível exposto | 🔄 Pendente |
-| M8 | `StepConfirmacao` incompleto | `inscricao.tsx` | Revisão limitada | 🔄 Pendente |
+| M8 | `StepConfirmacao` simplificado (campos removidos intencionalmente) | `inscricao.tsx` | Revisão limitada | ✅ Resolvido — campos removidos do formulário |
 | M9 | Erros sem `aria-live`/`role="alert"` | `inscricao.tsx` | Acessibilidade | 🔄 Pendente |
 | M10 | `idade: String(idade ?? 0)` mascara erro | `inscricao.tsx` | Idade 0 enviada | 🔄 Pendente |
 
@@ -212,6 +215,15 @@
 | 25 | `vercel.json` com bloco `env` e referências a Vercel Secrets | `vercel.json` | 16/06 |
 | 26 | Script `deploy-safety-check.mjs` criado (validação pré-deploy) | `scripts/deploy-safety-check.mjs` | 16/06 |
 | 27 | `supabase/config.toml` enriquecido (auth, api config) | `supabase/config.toml` | 16/06 |
+| 28 | Removidos campos Nome do Pai e Nome da Mãe do formulário | `inscricao.tsx` | 12/06 |
+| 29 | Removidos campos Série Escolar e Tamanho da Camisa do formulário | `inscricao.tsx` | 12/06 |
+| 30 | Campos removidos do payload de homologação | `homologation-public-flow.mjs` | 12/06 |
+| 31 | Proteção contra múltiplos envios (estado `submitted` + guard no `submit()`) | `inscricao.tsx` | 12/06 |
+| 32 | Sucesso inline com card de protocolo (sem navegação para `/inscricao/sucesso`) | `inscricao.tsx` | 12/06 |
+| 33 | Bloqueio de reenvio pós-sucesso + botão "✓ Inscrição Enviada" | `inscricao.tsx` | 12/06 |
+| 34 | Componente `SuccessCard` com protocolo, "Guardar número", link "Ir para Consulta" | `inscricao.tsx` | 12/06 |
+| 35 | Reinício do fluxo via reload/voltar ao início | `inscricao.tsx` | 12/06 |
+| 36 | Sentry monitoring integrado (client + server) | `src/integrations/sentry/` | 12/06 |
 
 ---
 
@@ -380,6 +392,11 @@
 |------|:------:|
 | Landing page | ✅ Implementado |
 | Formulário 6 etapas | ✅ Implementado |
+| Campos removidos (Nome do Pai, Nome da Mãe, Série, Camisa) | ✅ Removido da UI/types/payload |
+| Proteção contra múltiplos envios | ✅ Implementado |
+| Sucesso inline com protocolo (sem navegação) | ✅ Implementado |
+| Card de confirmação com "Ir para Consulta" | ✅ Implementado |
+| Reinício do fluxo (recarregar/voltar) | ✅ Implementado |
 | Validação CPF client-side | ✅ Implementado |
 | Validação CPF server-side | ✅ Implementado |
 | Máscara CPF | ✅ Implementado |
@@ -391,7 +408,7 @@
 | Timeout anti-bot (5s) | ✅ Implementado |
 | Prevenção duplicatas | ✅ Implementado |
 | Irmãos permitidos | ✅ Implementado |
-| Página de sucesso | ✅ Implementado |
+| Página de sucesso (`/inscricao/sucesso`) mantida para acesso direto | ✅ Implementado |
 | Consulta pública | ✅ Implementado |
 | Salvamento rascunho (localStorage) | ✅ Implementado |
 | Responsividade | ⚠️ Parcial (nav sem hamburger) |
@@ -533,7 +550,7 @@
 ### Frontend
 - `src/routes/__root.tsx` (133 linhas)
 - `src/routes/index.tsx` (269 linhas)
-- `src/routes/inscricao.tsx` (751 linhas)
+- `src/routes/inscricao.tsx` (~855 linhas)
 - `src/routes/inscricao.sucesso.tsx` (65 linhas)
 - `src/routes/consulta.tsx` (116 linhas)
 - `src/routes/admin.tsx` (123 linhas)
@@ -662,6 +679,14 @@
 | `supabase/tests/04_test_admin_register_presence.pg.sql` | Criado — 6 testes RPC admin_register_presence |
 | `supabase/tests/05_test_admin_delete_inscricao.pg.sql` | Criado — 8 testes RPC admin_delete_inscricao |
 | `package.json` | Adicionados scripts `test`, `test:watch`, `test:coverage`, `test:pg`; devDependencies vitest, @testing-library/*, jsdom |
+| `src/routes/inscricao.tsx` | Removidos `nome_pai`, `nome_mae`, `serie_escolar`, `tamanho_camisa`; novo fluxo de sucesso inline com `SuccessCard`, `submitted`/`protocoloResult` states, proteção contra múltiplos envios, bloqueio de reenvio |
+| `scripts/homologation-public-flow.mjs` | Removidos `nome_pai`, `nome_mae`, `serie_escolar`, `tamanho_camisa` do payload de teste |
+| `src/integrations/sentry/index.ts` | Criado — Inicialização Sentry client-side (browser tracing + replay) |
+| `src/integrations/sentry/server.ts` | Criado — Inicialização Sentry server-side (Node.js) |
+| `src/server.ts` | Adicionado Sentry server init + `captureException` em SSR errors |
+| `src/routes/__root.tsx` | Adicionado Sentry client init + `Sentry.ErrorBoundary` |
+| `src/lib/error-capture.ts` | Adicionado forward de `error`/`unhandledrejection` para Sentry |
+| `.env.example` | Adicionados `SENTRY_DSN` e `VITE_SENTRY_DSN` |
 
 ---
 
