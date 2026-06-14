@@ -624,7 +624,7 @@ function StepSaude({ data, onChange }: StepProps<"saude">) {
             onChange={(e) => onChange({ necessidades_especiais: e.target.value })}
           />
         </Field>
-        <Field label="Restrições alimentares">
+        <Field label="Intolerância alimentar">
           <Textarea
             value={data.restricoes_alimentares}
             onChange={(e) => onChange({ restricoes_alimentares: e.target.value })}
@@ -839,7 +839,7 @@ function StepConfirmacao({ data }: { data: FormData }) {
           {row("Alergias", data.saude.alergias)}
           {row("Medicamentos", data.saude.medicamentos)}
           {row("Necessidades especiais", data.saude.necessidades_especiais)}
-          {row("Restrições alimentares", data.saude.restricoes_alimentares)}
+          {row("Intolerância alimentar", data.saude.restricoes_alimentares)}
         </div>
         <div className="glass-card rounded-2xl p-4 space-y-0.5">
           <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[color:var(--gold-deep)] mb-2">

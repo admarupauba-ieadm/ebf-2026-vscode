@@ -1,17 +1,13 @@
 import { LogoUCADMA, LogoAD } from "./Brand";
-import { Instagram, Facebook, MapPin, Phone } from "lucide-react";
+import { Instagram, MapPin, Phone } from "lucide-react";
 
 const SOCIAL_LINKS = [
   {
-    href: "https://www.instagram.com/ucadma_marupauba/",
+    href: "https://www.instagram.com/brilhoceleste__oficial?igsh=MTVycm13emcybnI1YQ==",
     label: "Instagram UCADMA Marupaúba",
     icon: Instagram,
   },
-  {
-    href: "https://www.facebook.com/ucadma.marupauba",
-    label: "Facebook UCADMA Marupaúba",
-    icon: Facebook,
-  },
+
 ] as const;
 
 export function SiteFooter() {
@@ -41,12 +37,20 @@ export function SiteFooter() {
             </li>
             <li className="flex gap-2">
               <Phone className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-              <span>Secretaria UCADMA</span>
+              <span>Fale conosco:
+                <br />
+                <a
+                  href="tel:+55991999999"
+                  className="text-[color:var(--gold)] hover:underline"
+                >
+                  (91) 99999-9999
+                </a>
+              </span>
             </li>
           </ul>
         </div>
         <div>
-          <h4 className="font-display font-semibold mb-3 text-[color:var(--gold)]">Redes</h4>
+          <h4 className="font-display font-semibold mb-3 text-[color:var(--gold)]">Rede Social</h4>
           <div className="flex gap-3" role="list" aria-label="Redes sociais">
             {SOCIAL_LINKS.map(({ href, label, icon: Icon }) => (
               <a
@@ -65,15 +69,28 @@ export function SiteFooter() {
           <div className="mt-6 flex items-center gap-3">
             <LogoUCADMA className="h-12 w-12 bg-white/10 rounded-full p-1" aria-hidden="true" />
             <div className="text-xs text-white/70">
-              União de Crianças
+              União de Crianças da
               <br />
               Assembleia de Deus
+              <br />
+              Campo Marupaúba
             </div>
           </div>
         </div>
       </div>
       <div className="border-t border-white/10 py-4 text-center text-xs text-white/60">
         © 2026 UCADMA Marupaúba · Lucas 4:18-19
+        <p>
+          Desenvolvido por{" "}
+          <a
+            href="https://www.example.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[color:var(--gold)] hover:underline"
+          >
+            VNEXUS DEV ()
+          </a>
+        </p>
       </div>
     </footer>
   );

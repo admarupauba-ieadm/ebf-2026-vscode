@@ -47,7 +47,7 @@ export function mapMedicalNotes(row: {
     row.alergias ? `Alergias: ${row.alergias}` : "",
     row.medicamentos ? `Medicamentos: ${row.medicamentos}` : "",
     row.necessidadesEspeciais ? `Necessidades especiais: ${row.necessidadesEspeciais}` : "",
-    row.restricoesAlimentares ? `Restrições alimentares: ${row.restricoesAlimentares}` : "",
+    row.restricoesAlimentares ? `Intolerância alimentar: ${row.restricoesAlimentares}` : "",
   ].filter(Boolean);
   return parts.join(" | ") || "-";
 }
